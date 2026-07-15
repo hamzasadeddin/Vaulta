@@ -1,0 +1,49 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# FVM (SDK is cached globally; .fvmrc is the pin and IS committed)
+.fvm/
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/key.properties
+*.jks
+*.keystore
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/App.framework
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/ephemeral/
+ios/ServiceDefinitions.json
+ios/Runner/GeneratedPluginRegistrant.*
+
+# Web
+web/.dart_tool/
+
+# Alchemist: platform goldens are machine-specific and generated locally
+# for human review. Only the deterministic CI goldens are committed.
+**/goldens/windows/
+**/goldens/macos/
+**/goldens/linux/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

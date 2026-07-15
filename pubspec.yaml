@@ -1,0 +1,51 @@
+name: vaulta
+description: Vaulta — retail neobank client.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+# Constraints intentionally unpinned (spec §2): run `flutter pub get` once and
+# commit pubspec.lock — the lock file is the pin. Bump with
+# `flutter pub upgrade --major-versions`.
+dependencies:
+  decimal: any
+  dio: any
+  dio_smart_retry: any
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_riverpod: any
+  intl: any
+  lucide_icons_flutter: any
+  meta: any
+  talker_dio_logger: any
+  talker_flutter: any
+  uuid: any
+  widgetbook: any
+
+dev_dependencies:
+  alchemist: any
+  flutter_test:
+    sdk: flutter
+  mocktail: any
+  very_good_analysis: any
+
+flutter:
+  uses-material-design: true
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Inter-ExtraBold.ttf
+          weight: 800

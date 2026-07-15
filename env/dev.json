@@ -1,0 +1,4 @@
+{
+  "API_BASE_URL": "https://api.dev.vaulta.app/v1",
+  "ENABLE_NETWORK_LOGS": true
+}
