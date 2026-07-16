@@ -1,78 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vaulta/core/config/app_config.dart';
-import 'package:vaulta/core/money/currency.dart';
-import 'package:vaulta/core/money/money.dart';
+import 'package:vaulta/app/router/app_router.dart';
 import 'package:vaulta/design_system/design_system.dart';
+import 'package:vaulta/features/auth/presentation/providers/auth_providers.dart';
 
-/// Root widget. Routing arrives with the auth feature (Phase 3);
-/// until then the home is a minimal design-system proof.
-class VaultaApp extends ConsumerWidget {
+/// Root widget. Owns the router and the auto-lock lifecycle hook.
+class VaultaApp extends ConsumerStatefulWidget {
   const VaultaApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final config = ref.watch(appConfigProvider);
-    return MaterialApp(
+  ConsumerState<VaultaApp> createState() => _VaultaAppState();
+}
+
+class _VaultaAppState extends ConsumerState<VaultaApp> {
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-lock the moment the app leaves the foreground (spec §1 auth).
+    // onHide covers both backgrounding and window minimize; the router
+    // reacts to the Locked state and shows the unlock gate.
+    _lifecycle = AppLifecycleListener(
+      onHide: () => ref.read(authControllerProvider.notifier).lock(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp.router(
       title: 'Vaulta',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       // Dark-first brand; a user-facing toggle ships with Profile.
       themeMode: ThemeMode.dark,
-      home: _PlaceholderHome(flavor: config.flavor),
-    );
-  }
-}
-
-class _PlaceholderHome extends StatelessWidget {
-  const _PlaceholderHome({required this.flavor});
-
-  final Flavor flavor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
-          child: Padding(
-            padding: context.spacing.screenPadding,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Vaulta',
-                  textAlign: TextAlign.center,
-                  style: context.textStyles.displaySmall,
-                ),
-                SizedBox(height: context.spacing.sm),
-                Center(
-                  child: StatusBadge(
-                    label: flavor.name.toUpperCase(),
-                    kind: StatusKind.info,
-                  ),
-                ),
-                SizedBox(height: context.spacing.xl),
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Total balance',
-                        style: context.textStyles.labelMedium,
-                      ),
-                      SizedBox(height: context.spacing.sm),
-                      BalanceText(Money.parse('12480.50', Currency.usd)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      routerConfig: ref.watch(appRouterProvider),
     );
   }
 }

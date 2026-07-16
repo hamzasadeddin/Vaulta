@@ -90,10 +90,12 @@ void main() {
       var failureCalls = 0;
       const success = Result<int, Failure>.success(1);
       const failed = Result<int, Failure>.failure(failure);
-      success.onSuccess((_) => successCalls++);
-      success.onFailure((_) => failureCalls++);
-      failed.onSuccess((_) => successCalls++);
-      failed.onFailure((_) => failureCalls++);
+      success
+        ..onSuccess((_) => successCalls++)
+        ..onFailure((_) => failureCalls++);
+      failed
+        ..onSuccess((_) => successCalls++)
+        ..onFailure((_) => failureCalls++);
       expect(successCalls, 1);
       expect(failureCalls, 1);
     });

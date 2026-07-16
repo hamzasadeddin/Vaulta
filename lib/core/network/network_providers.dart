@@ -4,6 +4,7 @@ import 'package:vaulta/core/config/app_config.dart';
 import 'package:vaulta/core/logging/logging_providers.dart';
 import 'package:vaulta/core/network/auth_tokens.dart';
 import 'package:vaulta/core/network/dio_client.dart';
+import 'package:vaulta/core/network/mock/mock_api_interceptor.dart';
 
 /// In-memory by default; the auth feature (Phase 3) overrides this with a
 /// `flutter_secure_storage`-backed implementation.
@@ -23,6 +24,13 @@ final sessionExpiredHandlerProvider = Provider<Future<void> Function()?>(
   (ref) => null,
 );
 
+/// One mock per app so challenge/session state is shared by [dioProvider]
+/// and [refreshDioProvider]. `null` when the flavor talks to a real API.
+final mockApiInterceptorProvider = Provider<MockApiInterceptor?>((ref) {
+  final config = ref.watch(appConfigProvider);
+  return config.useMockApi ? MockApiInterceptor() : null;
+});
+
 final dioProvider = Provider<Dio>((ref) {
   final config = ref.watch(appConfigProvider);
   return buildDio(
@@ -31,5 +39,24 @@ final dioProvider = Provider<Dio>((ref) {
     tokenStore: ref.watch(authTokenStoreProvider),
     tokenRefresher: ref.watch(authTokenRefresherProvider),
     onSessionExpired: ref.watch(sessionExpiredHandlerProvider),
+    mockApi: ref.watch(mockApiInterceptorProvider),
   );
+});
+
+/// Bare client for the token refresher. Deliberately has no auth
+/// interceptor — the refresher is *called by* the auth interceptor, and
+/// sharing [dioProvider] would create a provider cycle.
+final refreshDioProvider = Provider<Dio>((ref) {
+  final config = ref.watch(appConfigProvider);
+  final dio = Dio(
+    BaseOptions(
+      baseUrl: config.apiBaseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+      headers: const {'Accept': 'application/json'},
+    ),
+  );
+  final mock = ref.watch(mockApiInterceptorProvider);
+  if (mock != null) dio.interceptors.add(mock);
+  return dio;
 });

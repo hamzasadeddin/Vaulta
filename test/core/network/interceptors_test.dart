@@ -14,6 +14,7 @@ class _MockRefresher extends Mock implements AuthTokenRefresher {}
 /// `future` is @protected (dio-internal), hence the targeted ignores.
 RequestInterceptorHandler _requestHandler() {
   final handler = RequestInterceptorHandler();
+  // `future` is dio-internal; touched only to swallow error completions.
   // ignore: invalid_use_of_protected_member
   handler.future.ignore();
   return handler;
@@ -21,6 +22,7 @@ RequestInterceptorHandler _requestHandler() {
 
 ErrorInterceptorHandler _errorHandler() {
   final handler = ErrorInterceptorHandler();
+  // `future` is dio-internal; touched only to swallow error completions.
   // ignore: invalid_use_of_protected_member
   handler.future.ignore();
   return handler;

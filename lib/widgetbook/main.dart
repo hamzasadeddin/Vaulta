@@ -26,7 +26,7 @@ class WidgetbookApp extends StatelessWidget {
             WidgetbookTheme(name: 'Light', data: AppTheme.light()),
           ],
         ),
-        TextScaleAddon(min: 1, max: 2),
+        TextScaleAddon(min: 1),
       ],
       directories: [
         WidgetbookFolder(

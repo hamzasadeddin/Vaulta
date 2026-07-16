@@ -12,6 +12,7 @@ class AppConfig {
     required this.flavor,
     required this.apiBaseUrl,
     required this.enableNetworkLogs,
+    required this.useMockApi,
   });
 
   /// Reads compile-time defines. Must be called with `const`-resolvable keys.
@@ -20,12 +21,17 @@ class AppConfig {
       flavor: flavor,
       apiBaseUrl: const String.fromEnvironment('API_BASE_URL'),
       enableNetworkLogs: const bool.fromEnvironment('ENABLE_NETWORK_LOGS'),
+      useMockApi: const bool.fromEnvironment('USE_MOCK_API'),
     );
   }
 
   final Flavor flavor;
   final String apiBaseUrl;
   final bool enableNetworkLogs;
+
+  /// Serves canned JSON from the mock API interceptor so the
+  /// app runs fully offline. On in dev/staging, off in prod.
+  final bool useMockApi;
 
   bool get isProd => flavor == Flavor.prod;
 }

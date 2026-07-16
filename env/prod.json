@@ -1,4 +1,5 @@
 {
   "API_BASE_URL": "https://api.vaulta.app/v1",
-  "ENABLE_NETWORK_LOGS": false
+  "ENABLE_NETWORK_LOGS": false,
+  "USE_MOCK_API": false
 }

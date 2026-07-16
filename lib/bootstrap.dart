@@ -1,11 +1,10 @@
 import 'dart:ui';
 
 import 'package:flutter/widgets.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:talker_flutter/talker_flutter.dart';
 import 'package:vaulta/app/app.dart';
+import 'package:vaulta/app/di/di_overrides.dart';
 import 'package:vaulta/core/config/app_config.dart';
-import 'package:vaulta/core/logging/logging_providers.dart';
 
 /// Shared startup path for every flavor entrypoint.
 Future<void> bootstrap({required Flavor flavor}) async {
@@ -27,11 +26,9 @@ Future<void> bootstrap({required Flavor flavor}) async {
   talker.info('Booting Vaulta [${flavor.name}] → ${config.apiBaseUrl}');
 
   runApp(
-    ProviderScope(
-      overrides: [
-        appConfigProvider.overrideWithValue(config),
-        talkerProvider.overrideWithValue(talker),
-      ],
+    buildAppScope(
+      config: config,
+      talker: talker,
       child: const VaultaApp(),
     ),
   );

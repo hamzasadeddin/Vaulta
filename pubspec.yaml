@@ -18,9 +18,16 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   flutter_riverpod: any
+  flutter_secure_storage: any
+  formz: any
+  freezed_annotation: any
+  go_router: any
   intl: any
+  json_annotation: any
+  local_auth: any
   lucide_icons_flutter: any
   meta: any
+  riverpod_annotation: any
   talker_dio_logger: any
   talker_flutter: any
   uuid: any
@@ -28,9 +35,13 @@ dependencies:
 
 dev_dependencies:
   alchemist: any
+  build_runner: any
   flutter_test:
     sdk: flutter
+  freezed: any
+  json_serializable: any
   mocktail: any
+  riverpod_generator: any
   very_good_analysis: any
 
 flutter:

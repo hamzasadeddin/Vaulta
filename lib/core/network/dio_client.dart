@@ -6,6 +6,7 @@ import 'package:vaulta/core/config/app_config.dart';
 import 'package:vaulta/core/network/auth_tokens.dart';
 import 'package:vaulta/core/network/interceptors/auth_interceptor.dart';
 import 'package:vaulta/core/network/interceptors/idempotency_interceptor.dart';
+import 'package:vaulta/core/network/mock/mock_api_interceptor.dart';
 
 /// Builds the app's single [Dio] instance.
 ///
@@ -13,13 +14,16 @@ import 'package:vaulta/core/network/interceptors/idempotency_interceptor.dart';
 /// 1. Idempotency — the key must exist before any retry duplicates the call.
 /// 2. Auth — handles 401 + refresh before the retry layer sees the error.
 /// 3. Retry — transient network errors only (never retries 4xx).
-/// 4. Logging — last, so it observes the final request/response shape.
+/// 4. Logging — observes the final request/response shape.
+/// 5. Mock API (optional) — truly last, so mocked traffic still flows
+///    through the entire real pipeline; only the socket is fake.
 Dio buildDio({
   required AppConfig config,
   required Talker talker,
   required AuthTokenStore tokenStore,
   AuthTokenRefresher? tokenRefresher,
   Future<void> Function()? onSessionExpired,
+  MockApiInterceptor? mockApi,
 }) {
   final dio = Dio(
     BaseOptions(
@@ -52,6 +56,7 @@ Dio buildDio({
       // Headers (Authorization / Idempotency-Key) stay unlogged:
       // TalkerDioLoggerSettings defaults keep them off; never enable them.
       TalkerDioLogger(talker: talker),
+    if (mockApi != null) mockApi,
   ]);
 
   return dio;
