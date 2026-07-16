@@ -41,8 +41,8 @@ void main() {
 
     test('adds and subtracts exactly', () {
       // The classic double trap: 0.1 + 0.2.
-      final sum = Money.parse('0.1', Currency.usd) +
-          Money.parse('0.2', Currency.usd);
+      final sum =
+          Money.parse('0.1', Currency.usd) + Money.parse('0.2', Currency.usd);
       expect(sum.amount, Decimal.parse('0.3'));
       expect((tenUsd - threeUsd).amount, Decimal.parse('6.90'));
     });
