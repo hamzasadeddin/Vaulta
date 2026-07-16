@@ -53,6 +53,26 @@ void main() {
       );
     });
 
+    test('bad certificates map to NetworkFailure with a TLS message', () {
+      final failure = mapExceptionToFailure(
+        _dioError(type: DioExceptionType.badCertificate),
+      );
+      expect(failure, isA<NetworkFailure>());
+      expect(failure.message, contains('certificate'));
+    });
+
+    test('unknown dio errors keep their message', () {
+      final options = RequestOptions(path: '/test');
+      final failure = mapExceptionToFailure(
+        DioException(
+          requestOptions: options,
+          message: 'socket exploded',
+        ),
+      );
+      expect(failure, isA<UnexpectedFailure>());
+      expect(failure.message, 'socket exploded');
+    });
+
     test('401/403 map to AuthFailure', () {
       expect(
         mapExceptionToFailure(_dioError(statusCode: 401)),

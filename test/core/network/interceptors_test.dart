@@ -175,6 +175,32 @@ void main() {
       verifyNever(() => refresher.refresh(any()));
     });
 
+    test('surfaces the retry error when the retried request also fails',
+        () async {
+      await store.write(
+        const AuthTokens(accessToken: 'stale', refreshToken: 'refresh-1'),
+      );
+      when(() => refresher.refresh('refresh-1')).thenAnswer(
+        (_) async =>
+            const AuthTokens(accessToken: 'fresh', refreshToken: 'refresh-2'),
+      );
+      final options = RequestOptions(path: '/accounts');
+      await interceptor.onRequest(options, _requestHandler());
+
+      // Refresh succeeds, but the replayed request fails anyway (e.g. the
+      // server is down). That error must reach the caller, not be swallowed.
+      final retryError = DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionError,
+      );
+      when(() => dio.fetch<dynamic>(any())).thenThrow(retryError);
+
+      await interceptor.onError(_unauthorized(options), _errorHandler());
+
+      verify(() => refresher.refresh('refresh-1')).called(1);
+      expect(options.headers['Authorization'], 'Bearer fresh');
+    });
+
     test('clears the session when refresh fails', () async {
       await store.write(
         const AuthTokens(accessToken: 'stale', refreshToken: 'refresh-1'),

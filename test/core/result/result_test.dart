@@ -109,6 +109,42 @@ void main() {
         const Result<int, Failure>.success(1),
         isNot(const Result<int, Failure>.success(2)),
       );
+      expect(
+        const Result<int, Failure>.failure(failure),
+        const Result<int, Failure>.failure(failure),
+      );
+      expect(
+        const Result<int, Failure>.failure(failure),
+        isNot(const Result<int, Failure>.failure(CacheFailure())),
+      );
+      expect(
+        const Result<int, Failure>.success(1),
+        isNot(const Result<int, Failure>.failure(failure)),
+      );
+    });
+
+    test('hashCode agrees with equality', () {
+      expect(
+        const Result<int, Failure>.success(1).hashCode,
+        const Result<int, Failure>.success(1).hashCode,
+      );
+      expect(
+        const Result<int, Failure>.failure(failure).hashCode,
+        const Result<int, Failure>.failure(failure).hashCode,
+      );
+      // Success(x) and Failed(x) must not collide.
+      expect(
+        const Result<int, Failure>.success(1).hashCode,
+        isNot(const Result<int, Failure>.failure(failure).hashCode),
+      );
+    });
+
+    test('toString names the variant and payload', () {
+      expect(const Result<int, Failure>.success(7).toString(), contains('7'));
+      expect(
+        const Result<int, Failure>.failure(failure).toString(),
+        contains('NetworkFailure'),
+      );
     });
   });
 }

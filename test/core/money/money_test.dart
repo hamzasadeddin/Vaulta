@@ -41,8 +41,8 @@ void main() {
 
     test('adds and subtracts exactly', () {
       // The classic double trap: 0.1 + 0.2.
-      final sum =
-          Money.parse('0.1', Currency.usd) + Money.parse('0.2', Currency.usd);
+      final sum = Money.parse('0.1', Currency.usd) +
+          Money.parse('0.2', Currency.usd);
       expect(sum.amount, Decimal.parse('0.3'));
       expect((tenUsd - threeUsd).amount, Decimal.parse('6.90'));
     });
@@ -69,8 +69,34 @@ void main() {
 
     test('comparisons', () {
       expect(threeUsd < tenUsd, isTrue);
+      expect(threeUsd <= tenUsd, isTrue);
+      expect(tenUsd <= tenUsd, isTrue);
+      expect(tenUsd > threeUsd, isTrue);
       expect(tenUsd >= tenUsd, isTrue);
+      expect(tenUsd >= threeUsd, isTrue);
+      expect(tenUsd < threeUsd, isFalse);
+      expect(threeUsd > tenUsd, isFalse);
       expect(Money.zero(Currency.usd).isZero, isTrue);
+      expect(tenUsd.isPositive, isTrue);
+      expect((-tenUsd).isNegative, isTrue);
+    });
+
+    test('compareTo orders and enables sorting', () {
+      expect(threeUsd.compareTo(tenUsd), isNegative);
+      expect(tenUsd.compareTo(threeUsd), isPositive);
+      expect(tenUsd.compareTo(tenUsd), isZero);
+
+      final amounts = [tenUsd, threeUsd, Money.zero(Currency.usd)]..sort();
+      expect(amounts.first.isZero, isTrue);
+      expect(amounts.last, tenUsd);
+    });
+
+    test('rejects the remaining cross-currency comparisons', () {
+      final jod = Money.parse('10', Currency.jod);
+      expect(() => tenUsd <= jod, throwsArgumentError);
+      expect(() => tenUsd > jod, throwsArgumentError);
+      expect(() => tenUsd >= jod, throwsArgumentError);
+      expect(() => tenUsd - jod, throwsArgumentError);
     });
   });
 
@@ -126,6 +152,21 @@ void main() {
         Money.parse('1.50', Currency.usd),
         isNot(Money.parse('1.50', Currency.jod)),
       );
+    });
+
+    test('hashCode agrees with equality', () {
+      expect(
+        Money.parse('1.50', Currency.usd).hashCode,
+        Money.parse('1.5', Currency.usd).hashCode,
+      );
+      expect(
+        Money.parse('1.50', Currency.usd).hashCode,
+        isNot(Money.parse('1.50', Currency.jod).hashCode),
+      );
+    });
+
+    test('toString carries the currency code', () {
+      expect(Money.parse('12.345', Currency.jod).toString(), 'JOD 12.345');
     });
 
     test('Currency.fromCode', () {
