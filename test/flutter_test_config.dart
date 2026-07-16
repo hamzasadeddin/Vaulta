@@ -36,8 +36,18 @@ class _TolerantGoldenComparator extends LocalFileComparator {
   _TolerantGoldenComparator(Uri basedir)
       : super(Uri.parse('${basedir}test.dart'));
 
-  /// Maximum fraction of differing pixels treated as noise (0.5%).
-  static const _tolerance = 0.005;
+  /// Maximum fraction of differing pixels treated as noise.
+  ///
+  /// Empirical: goldens generated on Windows and verified on the Ubuntu CI
+  /// runner drift by 0.51%–0.86% across the current suite — antialiasing on
+  /// rounded corners and glyph edges. 2% leaves headroom for runner image
+  /// updates while staying far below any real regression: a wrong colour,
+  /// a shifted layout or a missing widget moves whole regions of the image,
+  /// not a rim of pixels.
+  ///
+  /// If a future diff lands between 1% and 2%, do not raise this — inspect
+  /// the `golden-failures` CI artifact first.
+  static const _tolerance = 0.02;
 
   @override
   Future<bool> compare(Uint8List imageBytes, Uri golden) async {

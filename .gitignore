@@ -34,10 +34,14 @@ ios/Runner/GeneratedPluginRegistrant.*
 web/.dart_tool/
 
 # Alchemist: platform goldens are machine-specific and generated locally
-# for human review. Only the deterministic CI goldens are committed.
+# for human review. Only the CI goldens are committed.
 **/goldens/windows/
 **/goldens/macos/
 **/goldens/linux/
+
+# Alchemist failure output (actual/expected/diff triplets) is transient.
+**/goldens/failures/
+**/failures/
 
 # IDE
 .idea/
