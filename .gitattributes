@@ -1,0 +1,18 @@
+# Normalize line endings. Windows checkouts get CRLF locally; the repo and
+# Linux CI always see LF. Without this, `dart format --set-exit-if-changed`
+# fails in CI on files that are correctly formatted on the dev machine.
+* text=auto eol=lf
+
+# Binary — never touch.
+*.png binary
+*.jpg binary
+*.ttf binary
+*.otf binary
+*.ico binary
+*.jks binary
+*.keystore binary
+
+# Windows-native scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
