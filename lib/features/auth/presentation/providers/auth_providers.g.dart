@@ -86,7 +86,7 @@ final class AuthControllerProvider
   }
 }
 
-String _$authControllerHash() => r'db3b41c5e020dbc1124ba9cf1b5a559a73a2ead0';
+String _$authControllerHash() => r'15c9257d5484fe12c226a77cb90e88df8b30cc53';
 
 /// Session state machine. `keepAlive` — the session outlives any screen.
 

@@ -147,6 +147,51 @@ void main() {
       expect(tokens?.accessToken, startsWith('mock-access-'));
     });
   });
+
+  group('dashboard summary through the full pipeline', () {
+    Future<void> authenticate() async {
+      final challengeId = await loginForChallenge();
+      final response = await dio.post<Map<String, dynamic>>(
+        '/auth/otp/verify',
+        data: {'challengeId': challengeId, 'code': MockApiInterceptor.otpCode},
+        options: public(),
+      );
+      await store.write(
+        AuthTokens(
+          accessToken: response.data!['accessToken'] as String,
+          refreshToken: response.data!['refreshToken'] as String,
+        ),
+      );
+    }
+
+    test('returns accounts and transactions when authenticated', () async {
+      await authenticate();
+
+      final response =
+          await dio.get<Map<String, dynamic>>('/dashboard/summary');
+
+      expect(response.statusCode, 200);
+      final accounts = response.data!['accounts'] as List<dynamic>;
+      expect(accounts, hasLength(3));
+      final first = accounts.first as Map<String, dynamic>;
+      expect(first['balanceMinor'], isA<int>());
+      expect(first['history'], isA<List<dynamic>>());
+      expect(response.data!['recentTransactions'], isNotEmpty);
+    });
+
+    test('rejects unauthenticated access with 401', () async {
+      await expectLater(
+        dio.get<Map<String, dynamic>>('/dashboard/summary'),
+        throwsA(
+          isA<DioException>().having(
+            (e) => e.response?.statusCode,
+            'statusCode',
+            401,
+          ),
+        ),
+      );
+    });
+  });
 }
 
 class _MockBackedRefresher implements AuthTokenRefresher {

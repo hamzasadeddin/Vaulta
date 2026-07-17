@@ -13,6 +13,7 @@ dependencies:
   decimal: any
   dio: any
   dio_smart_retry: any
+  fl_chart: any
   flutter:
     sdk: flutter
   flutter_localizations:

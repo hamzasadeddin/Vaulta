@@ -11,6 +11,7 @@ import 'package:vaulta/core/network/network_providers.dart';
 import 'package:vaulta/core/security/biometric_service.dart';
 import 'package:vaulta/features/auth/presentation/screens/login_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/otp_screen.dart';
+import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
 
 class _MockBiometricService extends Mock implements BiometricService {}
 
@@ -79,7 +80,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Welcome, Dana'), findsOneWidget);
+    expect(find.byType(DashboardScreen), findsOneWidget);
   });
 
   testWidgets('wrong OTP shows a field error and stays put', (tester) async {

@@ -1,13 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
-import 'package:vaulta/app/placeholder_home.dart';
 import 'package:vaulta/features/auth/presentation/providers/auth_providers.dart';
 import 'package:vaulta/features/auth/presentation/providers/auth_state.dart';
 import 'package:vaulta/features/auth/presentation/screens/login_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/otp_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/splash_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/unlock_screen.dart';
+import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
 
 part 'app_router.g.dart';
 
@@ -73,7 +73,7 @@ GoRouter appRouter(Ref ref) {
       ),
       GoRoute(
         path: AppRoutes.home,
-        builder: (context, state) => const PlaceholderHome(),
+        builder: (context, state) => const DashboardScreen(),
       ),
     ],
   );

@@ -56,6 +56,7 @@ class MockApiInterceptor extends Interceptor {
       'POST /auth/refresh' => _refresh(options),
       'POST /auth/logout' => _respond(options, 204),
       'GET /auth/me' => _me(options),
+      'GET /dashboard/summary' => _dashboardSummary(options),
       _ => null,
     };
   }
@@ -118,18 +119,206 @@ class MockApiInterceptor extends Interceptor {
   }
 
   Response<dynamic> _me(RequestOptions options) {
-    final header = options.headers['Authorization'] as String? ?? '';
-    if (!header.startsWith('Bearer mock-access-')) {
-      return _respond(options, 401, {
-        'message': 'Session expired',
-        'code': 'UNAUTHENTICATED',
-      });
-    }
+    if (!_authenticated(options)) return _unauthenticated(options);
     return _respond(
       options,
       200,
       _user(_sessionEmail ?? 'demo@vaulta.app'),
     );
+  }
+
+  Response<dynamic> _dashboardSummary(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final now = DateTime.now();
+    return _respond(options, 200, {
+      'accounts': [
+        _account(
+          id: 'acc_chk',
+          name: 'Main Checking',
+          currency: 'USD',
+          balanceMinor: 1248050,
+          deltasMinor: const [
+            52100, -8620, -1250, 31000, -4370, 425000, -12480,
+            -8790, -1599, -21500, -6213, -50000, -475, //
+          ],
+          now: now,
+        ),
+        _account(
+          id: 'acc_sav',
+          name: 'Savings',
+          currency: 'EUR',
+          balanceMinor: 893200,
+          deltasMinor: const [
+            0, 25000, 0, 0, 25000, 0, 0, 25000, 0, 0, 25000, 0, 0, //
+          ],
+          now: now,
+        ),
+        _account(
+          id: 'acc_jod',
+          name: 'Amman Account',
+          currency: 'JOD',
+          balanceMinor: 3415750,
+          deltasMinor: const [
+            -14200, 0, 88000, -9350, 0, -24500, 12000,
+            0, -7800, 150000, -5400, 0, -18750, //
+          ],
+          now: now,
+        ),
+      ],
+      'recentTransactions': [
+        _txn(
+          id: 'txn_101',
+          accountId: 'acc_chk',
+          title: 'Blue Fig Caf\u00e9',
+          category: 'dining',
+          amountMinor: -475,
+          currency: 'USD',
+          occurredAt: now.subtract(const Duration(hours: 2)),
+          status: 'pending',
+        ),
+        _txn(
+          id: 'txn_102',
+          accountId: 'acc_chk',
+          title: 'Careem',
+          category: 'transport',
+          amountMinor: -1250,
+          currency: 'USD',
+          occurredAt: now.subtract(const Duration(hours: 5)),
+        ),
+        _txn(
+          id: 'txn_103',
+          accountId: 'acc_chk',
+          title: 'Carrefour',
+          category: 'groceries',
+          amountMinor: -8620,
+          currency: 'USD',
+          occurredAt: now.subtract(const Duration(days: 1, hours: 3)),
+        ),
+        _txn(
+          id: 'txn_104',
+          accountId: 'acc_chk',
+          title: 'Salary \u2014 Vaulta Labs',
+          category: 'salary',
+          amountMinor: 425000,
+          currency: 'USD',
+          occurredAt: now.subtract(const Duration(days: 1, hours: 9)),
+        ),
+        _txn(
+          id: 'txn_105',
+          accountId: 'acc_chk',
+          title: 'Netflix',
+          category: 'entertainment',
+          amountMinor: -1599,
+          currency: 'USD',
+          occurredAt: now.subtract(const Duration(days: 2, hours: 4)),
+        ),
+        _txn(
+          id: 'txn_106',
+          accountId: 'acc_chk',
+          title: 'To Savings',
+          category: 'transfer',
+          amountMinor: -50000,
+          currency: 'USD',
+          occurredAt: now.subtract(const Duration(days: 3, hours: 1)),
+        ),
+        _txn(
+          id: 'txn_107',
+          accountId: 'acc_chk',
+          title: 'Amazon',
+          category: 'shopping',
+          amountMinor: -6213,
+          currency: 'USD',
+          occurredAt: now.subtract(const Duration(days: 4, hours: 6)),
+        ),
+        _txn(
+          id: 'txn_108',
+          accountId: 'acc_jod',
+          title: 'Zain',
+          category: 'utilities',
+          amountMinor: -24500,
+          currency: 'JOD',
+          occurredAt: now.subtract(const Duration(days: 5, hours: 2)),
+        ),
+      ],
+    });
+  }
+
+  bool _authenticated(RequestOptions options) {
+    final header = options.headers['Authorization'] as String? ?? '';
+    return header.startsWith('Bearer mock-access-');
+  }
+
+  Response<dynamic> _unauthenticated(RequestOptions options) {
+    return _respond(options, 401, {
+      'message': 'Session expired',
+      'code': 'UNAUTHENTICATED',
+    });
+  }
+
+  Map<String, dynamic> _account({
+    required String id,
+    required String name,
+    required String currency,
+    required int balanceMinor,
+    required List<int> deltasMinor,
+    required DateTime now,
+  }) {
+    return {
+      'id': id,
+      'name': name,
+      'currency': currency,
+      'balanceMinor': balanceMinor,
+      'history': _history(
+        endBalanceMinor: balanceMinor,
+        deltasMinor: deltasMinor,
+        now: now,
+      ),
+    };
+  }
+
+  /// Builds a daily balance history that ends at [endBalanceMinor] today,
+  /// walking backwards through [deltasMinor] (day-over-day changes).
+  List<Map<String, dynamic>> _history({
+    required int endBalanceMinor,
+    required List<int> deltasMinor,
+    required DateTime now,
+  }) {
+    final count = deltasMinor.length + 1;
+    final balances = List<int>.filled(count, endBalanceMinor);
+    for (var i = count - 2; i >= 0; i--) {
+      balances[i] = balances[i + 1] - deltasMinor[i];
+    }
+    final today = DateTime(now.year, now.month, now.day);
+    return [
+      for (var i = 0; i < count; i++)
+        {
+          'date':
+              today.subtract(Duration(days: count - 1 - i)).toIso8601String(),
+          'balanceMinor': balances[i],
+        },
+    ];
+  }
+
+  Map<String, dynamic> _txn({
+    required String id,
+    required String accountId,
+    required String title,
+    required String category,
+    required int amountMinor,
+    required String currency,
+    required DateTime occurredAt,
+    String status = 'completed',
+  }) {
+    return {
+      'id': id,
+      'accountId': accountId,
+      'title': title,
+      'category': category,
+      'amountMinor': amountMinor,
+      'currency': currency,
+      'occurredAt': occurredAt.toIso8601String(),
+      'status': status,
+    };
   }
 
   Map<String, dynamic> _issueTokens() {
