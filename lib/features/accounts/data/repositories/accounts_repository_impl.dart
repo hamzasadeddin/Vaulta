@@ -73,8 +73,8 @@ class AccountsRepositoryImpl implements AccountsRepository {
     HistoryRange range,
   ) async {
     final remoteResult = await runCatching(() async {
-      final points = (await _remote.history(accountId, days: range.days))
-          .toDomain();
+      final points =
+          (await _remote.history(accountId, days: range.days)).toDomain();
       await _bestEffort(() => _local.replaceHistory(accountId, range, points));
       return points;
     });

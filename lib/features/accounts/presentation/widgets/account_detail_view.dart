@@ -169,8 +169,7 @@ class _HistoryCardState extends ConsumerState<_HistoryCard> {
   @override
   Widget build(BuildContext context) {
     final spacing = context.spacing;
-    final state =
-        ref.watch(accountHistoryProvider(widget.account.id, _range));
+    final state = ref.watch(accountHistoryProvider(widget.account.id, _range));
 
     return AppCard(
       child: Column(
