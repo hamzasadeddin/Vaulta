@@ -154,7 +154,7 @@ final class SelectedAccountIdProvider
   }
 }
 
-String _$selectedAccountIdHash() => r'd534714f21404b69db11dc4db8a54c497e945950';
+String _$selectedAccountIdHash() => r'2e729cb238b894182861354127b5b2bf0e28fbae';
 
 /// The account whose balance and history the balance card shows.
 /// `null` means "the first account in the summary".

@@ -1,6 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:vaulta/app/shell/app_shell.dart';
+import 'package:vaulta/features/accounts/presentation/accounts_paths.dart';
+import 'package:vaulta/features/accounts/presentation/screens/account_detail_screen.dart';
+import 'package:vaulta/features/accounts/presentation/screens/accounts_screen.dart';
 import 'package:vaulta/features/auth/presentation/providers/auth_providers.dart';
 import 'package:vaulta/features/auth/presentation/providers/auth_state.dart';
 import 'package:vaulta/features/auth/presentation/screens/login_screen.dart';
@@ -23,6 +27,12 @@ abstract final class AppRoutes {
 /// one legal surface, enforced here rather than scattered across screens.
 /// Typed-route codegen (go_router_builder) is deferred until the route
 /// count justifies a third generator.
+///
+/// Signed-in surfaces live in a [StatefulShellRoute]: each branch keeps its
+/// own navigator (scroll positions and detail stacks survive tab switches),
+/// and [AppShell] renders the adaptive chrome around them. The auth
+/// redirect is untouched — any non-auth location is legal once
+/// authenticated, and everything else still collapses to its single screen.
 @Riverpod(keepAlive: true)
 GoRouter appRouter(Ref ref) {
   final refresh = ValueNotifier(0);
@@ -71,9 +81,35 @@ GoRouter appRouter(Ref ref) {
         path: AppRoutes.unlock,
         builder: (context, state) => const UnlockScreen(),
       ),
-      GoRoute(
-        path: AppRoutes.home,
-        builder: (context, state) => const DashboardScreen(),
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) =>
+            AppShell(navigationShell: navigationShell),
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: AppRoutes.home,
+                builder: (context, state) => const DashboardScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: AccountsPaths.root,
+                builder: (context, state) => const AccountsScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => AccountDetailScreen(
+                      accountId: state.pathParameters['id'] ?? '',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
       ),
     ],
   );

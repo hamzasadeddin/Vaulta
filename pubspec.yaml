@@ -13,6 +13,8 @@ dependencies:
   decimal: any
   dio: any
   dio_smart_retry: any
+  drift: any
+  drift_flutter: any
   fl_chart: any
   flutter:
     sdk: flutter
@@ -28,6 +30,8 @@ dependencies:
   local_auth: any
   lucide_icons_flutter: any
   meta: any
+  pdf: any
+  printing: any
   riverpod_annotation: any
   talker_dio_logger: any
   talker_flutter: any
@@ -37,6 +41,7 @@ dependencies:
 dev_dependencies:
   alchemist: any
   build_runner: any
+  drift_dev: any
   flutter_test:
     sdk: flutter
   freezed: any

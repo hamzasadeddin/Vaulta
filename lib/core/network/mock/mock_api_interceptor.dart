@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:dio/dio.dart';
 
 /// Serves the Vaulta API from canned JSON so the app runs fully offline.
@@ -19,6 +21,55 @@ class MockApiInterceptor extends Interceptor {
   final Duration latency;
 
   static const otpCode = '123456';
+
+  /// One source of truth for account data — the dashboard summary and every
+  /// `/accounts*` route derive from it, so balances never disagree between
+  /// screens. IBANs are mod-97 valid so Phase 8's validator accepts them.
+  static const _accountFixtures = <_AccountFixture>[
+    _AccountFixture(
+      id: 'acc_chk',
+      name: 'Main Checking',
+      type: 'checking',
+      iban: 'JO82VBNK0001000000000010204573',
+      currency: 'USD',
+      balanceMinor: 1248050,
+      openedAt: '2022-03-14T00:00:00.000',
+      dashboardDeltasMinor: [
+        52100, -8620, -1250, 31000, -4370, 425000, -12480,
+        -8790, -1599, -21500, -6213, -50000, -475, //
+      ],
+    ),
+    _AccountFixture(
+      id: 'acc_sav',
+      name: 'Savings',
+      type: 'savings',
+      iban: 'JO55VBNK0001000000000010204574',
+      currency: 'EUR',
+      balanceMinor: 893200,
+      openedAt: '2023-01-05T00:00:00.000',
+      dashboardDeltasMinor: [
+        0, 25000, 0, 0, 25000, 0, 0, 25000, 0, 0, 25000, 0, 0, //
+      ],
+    ),
+    _AccountFixture(
+      id: 'acc_jod',
+      name: 'Amman Account',
+      type: 'checking',
+      iban: 'JO73VBNK0002000000000010209981',
+      currency: 'JOD',
+      balanceMinor: 3415750,
+      openedAt: '2021-11-20T00:00:00.000',
+      dashboardDeltasMinor: [
+        -14200, 0, 88000, -9350, 0, -24500, 12000,
+        0, -7800, 150000, -5400, 0, -18750, //
+      ],
+    ),
+  ];
+
+  static final _historyPath = RegExp(r'^/accounts/([^/]+)/history$');
+  static final _statementsPath = RegExp(r'^/accounts/([^/]+)/statements$');
+  static final _statementDetailPath =
+      RegExp(r'^/accounts/([^/]+)/statements/([^/]+)$');
 
   final _challenges = <String, String>{}; // challengeId → email
   var _counter = 0;
@@ -50,15 +101,30 @@ class MockApiInterceptor extends Interceptor {
   }
 
   Response<dynamic>? _route(RequestOptions options) {
-    return switch ('${options.method.toUpperCase()} ${options.path}') {
+    final method = options.method.toUpperCase();
+    final path = options.path;
+    final exact = switch ('$method $path') {
       'POST /auth/login' => _login(options),
       'POST /auth/otp/verify' => _verifyOtp(options),
       'POST /auth/refresh' => _refresh(options),
       'POST /auth/logout' => _respond(options, 204),
       'GET /auth/me' => _me(options),
       'GET /dashboard/summary' => _dashboardSummary(options),
+      'GET /accounts' => _accountsList(options),
       _ => null,
     };
+    if (exact != null) return exact;
+    if (method != 'GET') return null;
+
+    final history = _historyPath.firstMatch(path);
+    if (history != null) return _accountHistory(options, history[1]!);
+    final detail = _statementDetailPath.firstMatch(path);
+    if (detail != null) {
+      return _statementDetail(options, detail[1]!, detail[2]!);
+    }
+    final statements = _statementsPath.firstMatch(path);
+    if (statements != null) return _statements(options, statements[1]!);
+    return null;
   }
 
   Response<dynamic> _login(RequestOptions options) {
@@ -132,38 +198,15 @@ class MockApiInterceptor extends Interceptor {
     final now = DateTime.now();
     return _respond(options, 200, {
       'accounts': [
-        _account(
-          id: 'acc_chk',
-          name: 'Main Checking',
-          currency: 'USD',
-          balanceMinor: 1248050,
-          deltasMinor: const [
-            52100, -8620, -1250, 31000, -4370, 425000, -12480,
-            -8790, -1599, -21500, -6213, -50000, -475, //
-          ],
-          now: now,
-        ),
-        _account(
-          id: 'acc_sav',
-          name: 'Savings',
-          currency: 'EUR',
-          balanceMinor: 893200,
-          deltasMinor: const [
-            0, 25000, 0, 0, 25000, 0, 0, 25000, 0, 0, 25000, 0, 0, //
-          ],
-          now: now,
-        ),
-        _account(
-          id: 'acc_jod',
-          name: 'Amman Account',
-          currency: 'JOD',
-          balanceMinor: 3415750,
-          deltasMinor: const [
-            -14200, 0, 88000, -9350, 0, -24500, 12000,
-            0, -7800, 150000, -5400, 0, -18750, //
-          ],
-          now: now,
-        ),
+        for (final fixture in _accountFixtures)
+          _account(
+            id: fixture.id,
+            name: fixture.name,
+            currency: fixture.currency,
+            balanceMinor: fixture.balanceMinor,
+            deltasMinor: fixture.dashboardDeltasMinor,
+            now: now,
+          ),
       ],
       'recentTransactions': [
         _txn(
@@ -243,6 +286,204 @@ class MockApiInterceptor extends Interceptor {
     });
   }
 
+  Response<dynamic> _accountsList(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    return _respond(options, 200, {
+      'accounts': [
+        for (final fixture in _accountFixtures)
+          {
+            'id': fixture.id,
+            'name': fixture.name,
+            'type': fixture.type,
+            'iban': fixture.iban,
+            'currency': fixture.currency,
+            'balanceMinor': fixture.balanceMinor,
+            'openedAt': fixture.openedAt,
+          },
+      ],
+    });
+  }
+
+  Response<dynamic> _accountHistory(RequestOptions options, String accountId) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final fixture = _fixtureById(accountId);
+    if (fixture == null) return _notFound(options);
+    final days =
+        (int.tryParse('${options.queryParameters['days'] ?? ''}') ?? 90)
+            .clamp(7, 730);
+    return _respond(options, 200, {
+      'accountId': fixture.id,
+      'currency': fixture.currency,
+      'points': _history(
+        endBalanceMinor: fixture.balanceMinor,
+        deltasMinor: _syntheticDeltas(fixture: fixture, days: days),
+        now: DateTime.now(),
+      ),
+    });
+  }
+
+  Response<dynamic> _statements(RequestOptions options, String accountId) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final fixture = _fixtureById(accountId);
+    if (fixture == null) return _notFound(options);
+    return _respond(options, 200, {
+      'statements': [
+        for (final statement in _statementsFor(fixture, DateTime.now()))
+          ({...statement}..remove('lines')),
+      ],
+    });
+  }
+
+  Response<dynamic> _statementDetail(
+    RequestOptions options,
+    String accountId,
+    String statementId,
+  ) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final fixture = _fixtureById(accountId);
+    if (fixture == null) return _notFound(options);
+    for (final statement in _statementsFor(fixture, DateTime.now())) {
+      if (statement['id'] == statementId) {
+        return _respond(options, 200, statement);
+      }
+    }
+    return _notFound(options);
+  }
+
+  _AccountFixture? _fixtureById(String id) {
+    for (final fixture in _accountFixtures) {
+      if (fixture.id == id) return fixture;
+    }
+    return null;
+  }
+
+  /// Deterministic pseudo-random daily deltas, seeded per (account, window)
+  /// with a content-stable hash so charts don't reshuffle between reloads.
+  /// A Postgres backend would compute these points from the transactions
+  /// table; the wire shape matches that view (§6.14).
+  List<int> _syntheticDeltas({
+    required _AccountFixture fixture,
+    required int days,
+  }) {
+    final rng = math.Random(_seed('${fixture.id}:$days'));
+    final base = math.max(1000, fixture.balanceMinor.abs() ~/ 70);
+    return List<int>.generate(days, (_) {
+      final roll = rng.nextInt(100);
+      if (roll < 6) return base * (5 + rng.nextInt(6)); // salary / inbound
+      if (roll < 26) return 0; // quiet day
+      return -(base ~/ 5 + rng.nextInt(base)); // day-to-day spend
+    });
+  }
+
+  /// Last three full months, walked backwards from (roughly) the current
+  /// balance. Each statement is internally consistent — `closing ==
+  /// opening + sum(lines)` — and chains into the previous month, exactly
+  /// like a ledger-backed view would.
+  List<Map<String, dynamic>> _statementsFor(
+    _AccountFixture fixture,
+    DateTime now,
+  ) {
+    final rng = math.Random(_seed(fixture.id));
+    var closingMinor =
+        fixture.balanceMinor - rng.nextInt(fixture.balanceMinor ~/ 25 + 1);
+    final statements = <Map<String, dynamic>>[];
+    for (var monthsBack = 1; monthsBack <= 3; monthsBack++) {
+      final start = DateTime(now.year, now.month - monthsBack);
+      final end = DateTime(now.year, now.month - monthsBack + 1, 0);
+      final lines = _statementLines(
+        rng: rng,
+        fixture: fixture,
+        start: start,
+        end: end,
+        index: monthsBack,
+      );
+      final netMinor =
+          lines.fold<int>(0, (sum, line) => sum + (line['amountMinor'] as int));
+      final openingMinor = closingMinor - netMinor;
+      statements.add({
+        'id': 'stm_${fixture.id}_'
+            '${start.year}${start.month.toString().padLeft(2, '0')}',
+        'accountId': fixture.id,
+        'periodStart': start.toIso8601String(),
+        'periodEnd': end.toIso8601String(),
+        'currency': fixture.currency,
+        'openingBalanceMinor': openingMinor,
+        'closingBalanceMinor': closingMinor,
+        'transactionCount': lines.length,
+        'lines': lines,
+      });
+      closingMinor = openingMinor;
+    }
+    return statements;
+  }
+
+  List<Map<String, dynamic>> _statementLines({
+    required math.Random rng,
+    required _AccountFixture fixture,
+    required DateTime start,
+    required DateTime end,
+    required int index,
+  }) {
+    const merchants = [
+      'Carrefour',
+      'Careem',
+      'Blue Fig Caf\u00e9',
+      'Orange JO',
+      'Talabat',
+      'Amazon',
+      'C-Town',
+      'Netflix',
+      'Zain',
+      'Pharmacy One',
+      'Manara Books',
+    ];
+    final base = math.max(1000, fixture.balanceMinor.abs() ~/ 70);
+    final count = 6 + rng.nextInt(6);
+    final lines = <Map<String, dynamic>>[
+      for (var i = 0; i < count; i++)
+        {
+          'id': 'stl_${fixture.id}_${index}_$i',
+          'title': merchants[rng.nextInt(merchants.length)],
+          'amountMinor': -(base ~/ 5 + rng.nextInt(base * 2)),
+          'occurredAt': DateTime(
+            start.year,
+            start.month,
+            1 + rng.nextInt(end.day),
+            8 + rng.nextInt(12),
+            rng.nextInt(60),
+          ).toIso8601String(),
+        },
+    ];
+    if (fixture.type == 'checking') {
+      lines.add({
+        'id': 'stl_${fixture.id}_${index}_salary',
+        'title': 'Salary \u2014 Vaulta Labs',
+        'amountMinor': base * 25,
+        'occurredAt': DateTime(
+          start.year,
+          start.month,
+          math.min(27, end.day),
+          9,
+        ).toIso8601String(),
+      });
+    }
+    lines.sort(
+      (a, b) =>
+          (a['occurredAt'] as String).compareTo(b['occurredAt'] as String),
+    );
+    return lines;
+  }
+
+  /// Content-stable hash: `String.hashCode` isn't guaranteed stable across
+  /// runs, and `Object.hash` is per-process seeded — this is neither.
+  int _seed(String key) {
+    var hash = 17;
+    for (final unit in key.codeUnits) {
+      hash = (hash * 31 + unit) & 0x3FFFFFFF;
+    }
+    return hash;
+  }
+
   bool _authenticated(RequestOptions options) {
     final header = options.headers['Authorization'] as String? ?? '';
     return header.startsWith('Bearer mock-access-');
@@ -252,6 +493,13 @@ class MockApiInterceptor extends Interceptor {
     return _respond(options, 401, {
       'message': 'Session expired',
       'code': 'UNAUTHENTICATED',
+    });
+  }
+
+  Response<dynamic> _notFound(RequestOptions options) {
+    return _respond(options, 404, {
+      'message': 'Not found',
+      'code': 'NOT_FOUND',
     });
   }
 
@@ -358,4 +606,29 @@ class MockApiInterceptor extends Interceptor {
       data: data,
     );
   }
+}
+
+/// Canonical account row — the mock's stand-in for the `accounts` table.
+class _AccountFixture {
+  const _AccountFixture({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.iban,
+    required this.currency,
+    required this.balanceMinor,
+    required this.openedAt,
+    required this.dashboardDeltasMinor,
+  });
+
+  final String id;
+  final String name;
+  final String type;
+  final String iban;
+  final String currency;
+  final int balanceMinor;
+  final String openedAt;
+
+  /// The 14-point sparkline history shown on the dashboard.
+  final List<int> dashboardDeltasMinor;
 }

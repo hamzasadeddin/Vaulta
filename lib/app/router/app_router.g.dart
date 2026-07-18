@@ -12,6 +12,12 @@ part of 'app_router.dart';
 /// one legal surface, enforced here rather than scattered across screens.
 /// Typed-route codegen (go_router_builder) is deferred until the route
 /// count justifies a third generator.
+///
+/// Signed-in surfaces live in a [StatefulShellRoute]: each branch keeps its
+/// own navigator (scroll positions and detail stacks survive tab switches),
+/// and [AppShell] renders the adaptive chrome around them. The auth
+/// redirect is untouched — any non-auth location is legal once
+/// authenticated, and everything else still collapses to its single screen.
 
 @ProviderFor(appRouter)
 final appRouterProvider = AppRouterProvider._();
@@ -20,6 +26,12 @@ final appRouterProvider = AppRouterProvider._();
 /// one legal surface, enforced here rather than scattered across screens.
 /// Typed-route codegen (go_router_builder) is deferred until the route
 /// count justifies a third generator.
+///
+/// Signed-in surfaces live in a [StatefulShellRoute]: each branch keeps its
+/// own navigator (scroll positions and detail stacks survive tab switches),
+/// and [AppShell] renders the adaptive chrome around them. The auth
+/// redirect is untouched — any non-auth location is legal once
+/// authenticated, and everything else still collapses to its single screen.
 
 final class AppRouterProvider
     extends $FunctionalProvider<GoRouter, GoRouter, GoRouter>
@@ -28,6 +40,12 @@ final class AppRouterProvider
   /// one legal surface, enforced here rather than scattered across screens.
   /// Typed-route codegen (go_router_builder) is deferred until the route
   /// count justifies a third generator.
+  ///
+  /// Signed-in surfaces live in a [StatefulShellRoute]: each branch keeps its
+  /// own navigator (scroll positions and detail stacks survive tab switches),
+  /// and [AppShell] renders the adaptive chrome around them. The auth
+  /// redirect is untouched — any non-auth location is legal once
+  /// authenticated, and everything else still collapses to its single screen.
   AppRouterProvider._()
       : super(
           from: null,
@@ -61,4 +79,4 @@ final class AppRouterProvider
   }
 }
 
-String _$appRouterHash() => r'490827b36cdfbed7ed399a5adda71b3a68d046f4';
+String _$appRouterHash() => r'147482b50b2886004f4f70d862217cde6554e6ec';
