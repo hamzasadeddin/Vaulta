@@ -49,9 +49,9 @@ class BalanceHistoryChart extends StatelessWidget {
     final spanDays = points.last.date.difference(points.first.date).inDays;
     final dateFormat =
         spanDays > 150 ? DateFormat('MMM yy') : DateFormat('d MMM');
-    final axisStyle = context.textStyles.labelSmall
-            ?.copyWith(color: colors.textTertiary) ??
-        TextStyle(fontSize: 10, color: colors.textTertiary);
+    final axisStyle =
+        context.textStyles.labelSmall?.copyWith(color: colors.textTertiary) ??
+            TextStyle(fontSize: 10, color: colors.textTertiary);
 
     return SizedBox(
       height: height,
