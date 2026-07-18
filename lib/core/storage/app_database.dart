@@ -53,6 +53,10 @@ class AppDatabase extends _$AppDatabase {
   @override
   int get schemaVersion => 1;
 
+  // coverage:ignore-start
+  // Platform executor selection (native vs web wasm) can't run under the
+  // VM test harness; the mapping logic is covered by
+  // accounts_local_data_source_test against an in-memory database.
   static QueryExecutor _open() {
     return driftDatabase(
       name: 'vaulta_cache',
@@ -65,4 +69,5 @@ class AppDatabase extends _$AppDatabase {
       ),
     );
   }
+  // coverage:ignore-end
 }

@@ -47,9 +47,8 @@ jobs:
         with:
           path: coverage/lcov.info
           min_coverage: 80
-          exclude: |
-            lib/main_*.dart
-            lib/bootstrap.dart
-            lib/widgetbook/**
-            **/*.g.dart
-            **/*.freezed.dart
+          # very_good_coverage splits `exclude` on spaces, not newlines, so
+          # these must stay on one line. Generated code and app entrypoints
+          # carry no meaningful unit tests and shouldn't count toward the
+          # threshold.
+          exclude: "lib/main_*.dart lib/bootstrap.dart lib/widgetbook/** **/*.g.dart **/*.freezed.dart"

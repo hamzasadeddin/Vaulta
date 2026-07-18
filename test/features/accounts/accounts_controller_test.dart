@@ -141,8 +141,9 @@ void main() {
     await settle();
     expect(sub.read().value, _fresh);
 
-    final failure =
-        await container.read(accountsControllerProvider.notifier).refresh();
+    final failure = await container
+        .read(accountsControllerProvider.notifier)
+        .refresh();
 
     expect(failure, isA<TimeoutFailure>());
     expect(sub.read().value, _fresh, reason: 'data survives the error');

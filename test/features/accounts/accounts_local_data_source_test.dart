@@ -41,66 +41,62 @@ Account _account(String id, int position, {int balanceMinor = 100000}) {
 Future<void> main() async {
   final sqliteAvailable = await _sqliteAvailable();
 
-  group(
-    'DriftAccountsLocalDataSource',
-    () {
-      late AppDatabase db;
-      late DriftAccountsLocalDataSource local;
+  group('DriftAccountsLocalDataSource', () {
+    late AppDatabase db;
+    late DriftAccountsLocalDataSource local;
 
-      setUp(() {
-        db = AppDatabase(NativeDatabase.memory());
-        local = DriftAccountsLocalDataSource(db);
-      });
+    setUp(() {
+      db = AppDatabase(NativeDatabase.memory());
+      local = DriftAccountsLocalDataSource(db);
+    });
 
-      tearDown(() => db.close());
+    tearDown(() => db.close());
 
-      test('replaceAccounts then watch emits them in stored order', () async {
-        final accounts = [
-          _account('acc_b', 0),
-          _account('acc_a', 1),
-          _account('acc_c', 2),
-        ];
-        await local.replaceAccounts(accounts, fetchedAt: DateTime(2026, 7, 18));
+    test('replaceAccounts then watch emits them in stored order', () async {
+      final accounts = [
+        _account('acc_b', 0),
+        _account('acc_a', 1),
+        _account('acc_c', 2),
+      ];
+      await local.replaceAccounts(accounts, fetchedAt: DateTime(2026, 7, 18));
 
-        final first = await local.watchAccounts().first;
-        expect(first.map((a) => a.id), ['acc_b', 'acc_a', 'acc_c']);
-        expect(first.first.balance, Money.parse('1000.00', Currency.usd));
-      });
+      final first = await local.watchAccounts().first;
+      expect(first.map((a) => a.id), ['acc_b', 'acc_a', 'acc_c']);
+      expect(first.first.balance, Money.parse('1000.00', Currency.usd));
+    });
 
-      test('replaceAccounts is a full mirror — removals disappear', () async {
-        await local.replaceAccounts(
-          [_account('acc_a', 0), _account('acc_b', 1)],
-          fetchedAt: DateTime(2026, 7, 18),
-        );
-        await local.replaceAccounts(
-          [_account('acc_a', 0)],
-          fetchedAt: DateTime(2026, 7, 19),
-        );
+    test('replaceAccounts is a full mirror — removals disappear', () async {
+      await local.replaceAccounts(
+        [_account('acc_a', 0), _account('acc_b', 1)],
+        fetchedAt: DateTime(2026, 7, 18),
+      );
+      await local.replaceAccounts(
+        [_account('acc_a', 0)],
+        fetchedAt: DateTime(2026, 7, 19),
+      );
 
-        final rows = await local.watchAccounts().first;
-        expect(rows.map((a) => a.id), ['acc_a']);
-      });
+      final rows = await local.watchAccounts().first;
+      expect(rows.map((a) => a.id), ['acc_a']);
+    });
 
-      test('history round-trips per (account, range)', () async {
-        final points = [
-          BalancePoint(
-            date: DateTime(2026, 7),
-            balance: Money.parse('100.00', Currency.usd),
-          ),
-          BalancePoint(
-            date: DateTime(2026, 7, 2),
-            balance: Money.parse('120.00', Currency.usd),
-          ),
-        ];
-        await local.replaceHistory('acc_a', HistoryRange.month, points);
+    test('history round-trips per (account, range)', () async {
+      final points = [
+        BalancePoint(
+          date: DateTime(2026, 7),
+          balance: Money.parse('100.00', Currency.usd),
+        ),
+        BalancePoint(
+          date: DateTime(2026, 7, 2),
+          balance: Money.parse('120.00', Currency.usd),
+        ),
+      ];
+      await local.replaceHistory('acc_a', HistoryRange.month, points);
 
-        final read = await local.getHistory('acc_a', HistoryRange.month);
-        expect(read, points);
-        // A different range is a different cache slot.
-        final other = await local.getHistory('acc_a', HistoryRange.year);
-        expect(other, isEmpty);
-      });
-    },
-    skip: sqliteAvailable ? false : 'sqlite3 native library not available',
-  );
+      final read = await local.getHistory('acc_a', HistoryRange.month);
+      expect(read, points);
+      // A different range is a different cache slot.
+      final other = await local.getHistory('acc_a', HistoryRange.year);
+      expect(other, isEmpty);
+    });
+  }, skip: sqliteAvailable ? false : 'sqlite3 native library not available',);
 }

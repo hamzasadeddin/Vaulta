@@ -141,12 +141,14 @@ void main() {
     await tester.tap(find.text('1Y'));
     await tester.pumpAndSettle();
 
-    verify(() => repository.getHistory('acc_chk', HistoryRange.year)).called(1);
+    verify(() => repository.getHistory('acc_chk', HistoryRange.year))
+        .called(1);
   });
 
   testWidgets('shows the error state when refresh fails with a cold cache',
       (tester) async {
-    when(repository.watchAccounts).thenAnswer((_) => const Stream.empty());
+    when(repository.watchAccounts)
+        .thenAnswer((_) => const Stream.empty());
     when(repository.refreshAccounts)
         .thenAnswer((_) async => const Result.failure(NetworkFailure()));
 
