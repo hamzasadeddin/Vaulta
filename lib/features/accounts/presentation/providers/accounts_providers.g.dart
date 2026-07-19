@@ -260,7 +260,7 @@ final class AccountByIdProvider
   }
 }
 
-String _$accountByIdHash() => r'c80f67d319461a7c95f1efa54ff79fef2b79ef85';
+String _$accountByIdHash() => r'7a6ee043d6ccfaaa3bb1352638320930097b6c3e';
 
 /// Lookup into the loaded list — detail surfaces resolve their account
 /// here instead of refetching.

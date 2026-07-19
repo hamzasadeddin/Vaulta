@@ -1,10 +1,14 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:vaulta/design_system/design_system.dart';
 import 'package:vaulta/features/dashboard/domain/entities/recent_transaction.dart';
+// Cross-feature import of a navigation path constant only — the dashboard
+// still owns its read model; it just links out to the transactions branch.
+import 'package:vaulta/features/transactions/presentation/transactions_paths.dart';
 
 /// Header + latest transactions across all accounts, newest first.
 class RecentActivity extends StatelessWidget {
@@ -31,7 +35,7 @@ class RecentActivity extends StatelessWidget {
               label: 'See all',
               variant: AppButtonVariant.ghost,
               size: AppButtonSize.small,
-              onPressed: () => _comingSoon(context),
+              onPressed: () => context.go(TransactionsPaths.root),
             ),
           ],
         ),
@@ -55,14 +59,6 @@ class RecentActivity extends StatelessWidget {
           ),
       ],
     );
-  }
-
-  void _comingSoon(BuildContext context) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(content: Text('Transaction history — coming soon.')),
-      );
   }
 }
 

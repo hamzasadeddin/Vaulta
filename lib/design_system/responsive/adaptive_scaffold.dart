@@ -80,6 +80,7 @@ class AdaptiveScaffold extends StatelessWidget {
 
   Widget _buildWithRail({required bool extended}) {
     final secondary = secondaryBody;
+    final showSecondary = extended && secondary != null;
     return Scaffold(
       appBar: appBar,
       floatingActionButton: floatingActionButton,
@@ -106,10 +107,20 @@ class AdaptiveScaffold extends StatelessWidget {
           ),
           const VerticalDivider(),
           Expanded(flex: 5, child: body),
-          if (extended && secondary != null) ...[
-            const VerticalDivider(),
-            Expanded(flex: 4, child: secondary),
-          ],
+          // The secondary slots stay in the child list at fixed indices
+          // whether or not a detail pane is shown — they simply collapse to
+          // zero width when hidden. Keeping the Row's child count constant
+          // means [body] never changes position, so the GlobalKey-carrying
+          // navigation shell it holds is never reparented across a branch
+          // switch or a pane toggle (the "duplicate GlobalKey" crash).
+          if (showSecondary)
+            const VerticalDivider()
+          else
+            const SizedBox.shrink(),
+          Expanded(
+            flex: showSecondary ? 4 : 0,
+            child: showSecondary ? secondary : const SizedBox.shrink(),
+          ),
         ],
       ),
     );

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:vaulta/design_system/design_system.dart';
@@ -14,6 +15,9 @@ import 'package:vaulta/features/accounts/presentation/widgets/account_tile.dart'
 import 'package:vaulta/features/accounts/presentation/widgets/account_visuals.dart';
 import 'package:vaulta/features/accounts/presentation/widgets/balance_history_chart.dart';
 import 'package:vaulta/features/accounts/presentation/widgets/statements_section.dart';
+// Cross-feature import of a navigation path constant only — the account
+// detail links out to the transactions branch pre-filtered to this account.
+import 'package:vaulta/features/transactions/presentation/transactions_paths.dart';
 
 /// Everything below the app bar on an account's detail surface. Used by
 /// both the pushed route (compact/medium, [useHeroes] on) and the
@@ -55,6 +59,14 @@ class AccountDetailView extends ConsumerWidget {
                 _HistoryCard(account: account),
                 SizedBox(height: spacing.lg),
                 _DetailsCard(account: account),
+                SizedBox(height: spacing.lg),
+                AppButton(
+                  label: 'View transactions',
+                  icon: LucideIcons.arrowLeftRight,
+                  variant: AppButtonVariant.secondary,
+                  onPressed: () =>
+                      context.go(TransactionsPaths.forAccount(account.id)),
+                ),
                 SizedBox(height: spacing.lg),
                 StatementsSection(account: account),
                 SizedBox(height: spacing.lg),

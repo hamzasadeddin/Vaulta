@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
@@ -66,14 +67,35 @@ class MockApiInterceptor extends Interceptor {
     ),
   ];
 
+  /// Merchant → category pairs for the synthetic transaction backlog.
+  static const _merchants = <(String, String)>[
+    ('Carrefour', 'groceries'),
+    ('C-Town', 'groceries'),
+    ('Careem', 'transport'),
+    ('Blue Fig Caf\u00e9', 'dining'),
+    ('Talabat', 'dining'),
+    ('Amazon', 'shopping'),
+    ('Manara Books', 'shopping'),
+    ('Netflix', 'entertainment'),
+    ('Orange JO', 'utilities'),
+    ('Zain', 'utilities'),
+    ('Pharmacy One', 'other'),
+  ];
+
   static final _historyPath = RegExp(r'^/accounts/([^/]+)/history$');
   static final _statementsPath = RegExp(r'^/accounts/([^/]+)/statements$');
   static final _statementDetailPath =
       RegExp(r'^/accounts/([^/]+)/statements/([^/]+)$');
+  static final _transactionDetailPath = RegExp(r'^/transactions/([^/]+)$');
+  static final _disputePath = RegExp(r'^/transactions/([^/]+)/dispute$');
 
   final _challenges = <String, String>{}; // challengeId → email
   var _counter = 0;
   String? _sessionEmail;
+
+  /// Day-cached transaction pool — see [_transactionPool].
+  DateTime? _poolDay;
+  List<Map<String, dynamic>>? _pool;
 
   @override
   Future<void> onRequest(
@@ -111,9 +133,16 @@ class MockApiInterceptor extends Interceptor {
       'GET /auth/me' => _me(options),
       'GET /dashboard/summary' => _dashboardSummary(options),
       'GET /accounts' => _accountsList(options),
+      'GET /transactions' => _transactions(options),
       _ => null,
     };
     if (exact != null) return exact;
+
+    if (method == 'POST') {
+      final dispute = _disputePath.firstMatch(path);
+      if (dispute != null) return _submitDispute(options, dispute[1]!);
+      return null;
+    }
     if (method != 'GET') return null;
 
     final history = _historyPath.firstMatch(path);
@@ -124,6 +153,10 @@ class MockApiInterceptor extends Interceptor {
     }
     final statements = _statementsPath.firstMatch(path);
     if (statements != null) return _statements(options, statements[1]!);
+    final transaction = _transactionDetailPath.firstMatch(path);
+    if (transaction != null) {
+      return _transactionDetail(options, transaction[1]!);
+    }
     return null;
   }
 
@@ -208,81 +241,12 @@ class MockApiInterceptor extends Interceptor {
             now: now,
           ),
       ],
-      'recentTransactions': [
-        _txn(
-          id: 'txn_101',
-          accountId: 'acc_chk',
-          title: 'Blue Fig Caf\u00e9',
-          category: 'dining',
-          amountMinor: -475,
-          currency: 'USD',
-          occurredAt: now.subtract(const Duration(hours: 2)),
-          status: 'pending',
-        ),
-        _txn(
-          id: 'txn_102',
-          accountId: 'acc_chk',
-          title: 'Careem',
-          category: 'transport',
-          amountMinor: -1250,
-          currency: 'USD',
-          occurredAt: now.subtract(const Duration(hours: 5)),
-        ),
-        _txn(
-          id: 'txn_103',
-          accountId: 'acc_chk',
-          title: 'Carrefour',
-          category: 'groceries',
-          amountMinor: -8620,
-          currency: 'USD',
-          occurredAt: now.subtract(const Duration(days: 1, hours: 3)),
-        ),
-        _txn(
-          id: 'txn_104',
-          accountId: 'acc_chk',
-          title: 'Salary \u2014 Vaulta Labs',
-          category: 'salary',
-          amountMinor: 425000,
-          currency: 'USD',
-          occurredAt: now.subtract(const Duration(days: 1, hours: 9)),
-        ),
-        _txn(
-          id: 'txn_105',
-          accountId: 'acc_chk',
-          title: 'Netflix',
-          category: 'entertainment',
-          amountMinor: -1599,
-          currency: 'USD',
-          occurredAt: now.subtract(const Duration(days: 2, hours: 4)),
-        ),
-        _txn(
-          id: 'txn_106',
-          accountId: 'acc_chk',
-          title: 'To Savings',
-          category: 'transfer',
-          amountMinor: -50000,
-          currency: 'USD',
-          occurredAt: now.subtract(const Duration(days: 3, hours: 1)),
-        ),
-        _txn(
-          id: 'txn_107',
-          accountId: 'acc_chk',
-          title: 'Amazon',
-          category: 'shopping',
-          amountMinor: -6213,
-          currency: 'USD',
-          occurredAt: now.subtract(const Duration(days: 4, hours: 6)),
-        ),
-        _txn(
-          id: 'txn_108',
-          accountId: 'acc_jod',
-          title: 'Zain',
-          category: 'utilities',
-          amountMinor: -24500,
-          currency: 'JOD',
-          occurredAt: now.subtract(const Duration(days: 5, hours: 2)),
-        ),
-      ],
+      // Head of the shared transaction pool (§9 "one shared source"):
+      // the dashboard feed and `/transactions` can never disagree. The
+      // extra receipt fields (reference, balanceAfterMinor) are ignored
+      // by the dashboard DTO.
+      'recentTransactions':
+          _recentTransactions(DateTime(now.year, now.month, now.day)),
     });
   }
 
@@ -350,11 +314,373 @@ class MockApiInterceptor extends Interceptor {
     return _notFound(options);
   }
 
+  /// `GET /transactions` — the keyset-paginated feed. Filters compose
+  /// server-side (the shape Postgres would serve, §6.14):
+  ///
+  ///     WHERE ... AND (occurred_at, id) < (:cursor_at, :cursor_id)
+  ///     ORDER BY occurred_at DESC, id DESC LIMIT :limit
+  ///
+  /// The cursor is an opaque base64 of `occurredAt|id`; `nextCursor` is
+  /// `null` once the feed is exhausted.
+  Response<dynamic> _transactions(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    String? param(String key) {
+      final value = options.queryParameters[key];
+      final text = value == null ? '' : '$value';
+      return text.isEmpty ? null : text;
+    }
+
+    final limit = (int.tryParse(param('limit') ?? '') ?? 25).clamp(1, 100);
+    final accountId = param('accountId');
+    final category = param('category');
+    final status = param('status');
+    final query = param('q')?.toLowerCase();
+
+    (String, String)? cursor;
+    final rawCursor = param('cursor');
+    if (rawCursor != null) {
+      cursor = _decodeCursor(rawCursor);
+      if (cursor == null) {
+        return _respond(options, 422, {
+          'message': 'Invalid cursor',
+          'errors': {
+            'cursor': ['Malformed pagination cursor'],
+          },
+        });
+      }
+    }
+
+    final filtered = [
+      for (final txn in _transactionPool(DateTime.now()))
+        if ((accountId == null || txn['accountId'] == accountId) &&
+            (category == null || txn['category'] == category) &&
+            (status == null || txn['status'] == status) &&
+            (query == null ||
+                (txn['title'] as String).toLowerCase().contains(query)))
+          txn,
+    ];
+
+    var start = 0;
+    if (cursor != null) {
+      final (cursorAt, cursorId) = cursor;
+      start = filtered.indexWhere((txn) {
+        final occurredAt = txn['occurredAt'] as String;
+        final byTime = occurredAt.compareTo(cursorAt);
+        if (byTime != 0) return byTime < 0;
+        return (txn['id'] as String).compareTo(cursorId) < 0;
+      });
+      if (start == -1) start = filtered.length;
+    }
+
+    final end = math.min(start + limit, filtered.length);
+    final page = filtered.sublist(start, end);
+    final hasMore = end < filtered.length;
+    return _respond(options, 200, {
+      'transactions': page,
+      'nextCursor': hasMore
+          ? _encodeCursor(
+              page.last['occurredAt'] as String,
+              page.last['id'] as String,
+            )
+          : null,
+    });
+  }
+
+  Response<dynamic> _transactionDetail(
+    RequestOptions options,
+    String transactionId,
+  ) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    for (final txn in _transactionPool(DateTime.now())) {
+      if (txn['id'] == transactionId) return _respond(options, 200, txn);
+    }
+    return _notFound(options);
+  }
+
+  Response<dynamic> _submitDispute(
+    RequestOptions options,
+    String transactionId,
+  ) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final exists = _transactionPool(DateTime.now())
+        .any((txn) => txn['id'] == transactionId);
+    if (!exists) return _notFound(options);
+
+    const reasons = {'unauthorized', 'wrongAmount', 'duplicate', 'other'};
+    final reason = _body(options)['reason'];
+    if (reason is! String || !reasons.contains(reason)) {
+      return _respond(options, 422, {
+        'message': 'Invalid dispute reason',
+        'errors': {
+          'reason': ['Pick a valid dispute reason'],
+        },
+      });
+    }
+    return _respond(options, 202, {
+      'disputeId': 'dsp_${++_counter}',
+      'transactionId': transactionId,
+      'status': 'received',
+    });
+  }
+
   _AccountFixture? _fixtureById(String id) {
     for (final fixture in _accountFixtures) {
       if (fixture.id == id) return fixture;
     }
     return null;
+  }
+
+  /// The mock's stand-in for the `transactions` table (§9 schema sketch).
+  ///
+  /// Built once per calendar day and cached: every timestamp is anchored
+  /// to midnight-relative offsets (like [_history]'s dates), so a paged
+  /// session sees identical bytes across requests and keyset cursors stay
+  /// stable — a `now`-relative pool would shift by seconds between pages
+  /// and duplicate or skip rows at the cursor boundary.
+  List<Map<String, dynamic>> _transactionPool(DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final cached = _pool;
+    if (cached != null && _poolDay == today) return cached;
+
+    // Keyset order: (occurred_at DESC, id DESC). The ISO-8601 strings all
+    // come from DateTime.toIso8601String() with zero microseconds, so they
+    // are fixed-width and lexicographic order == chronological order.
+    final txns = <Map<String, dynamic>>[
+      ..._recentTransactions(today),
+      for (final fixture in _accountFixtures)
+        ..._syntheticTransactions(fixture: fixture, today: today),
+    ]..sort((a, b) {
+        final byTime =
+            (b['occurredAt'] as String).compareTo(a['occurredAt'] as String);
+        if (byTime != 0) return byTime;
+        return (b['id'] as String).compareTo(a['id'] as String);
+      });
+    _applyRunningBalances(txns);
+    _poolDay = today;
+    _pool = txns;
+    return txns;
+  }
+
+  /// The eight curated entries the dashboard has always shown, now
+  /// day-anchored (fixed clock times instead of `now`-relative offsets)
+  /// so they participate in the deterministic pool. Same titles, amounts,
+  /// order and statuses as before.
+  List<Map<String, dynamic>> _recentTransactions(DateTime today) {
+    final checking = _accountFixtures[0];
+    final amman = _accountFixtures[2];
+    DateTime at(int daysBack, int hour, int minute) {
+      final day = today.subtract(Duration(days: daysBack));
+      return DateTime(day.year, day.month, day.day, hour, minute);
+    }
+
+    return [
+      _record(
+        fixture: checking,
+        id: 'txn_101',
+        title: 'Blue Fig Caf\u00e9',
+        category: 'dining',
+        amountMinor: -475,
+        occurredAt: at(0, 10, 24),
+        status: 'pending',
+      ),
+      _record(
+        fixture: checking,
+        id: 'txn_102',
+        title: 'Careem',
+        category: 'transport',
+        amountMinor: -1250,
+        occurredAt: at(0, 7, 41),
+      ),
+      _record(
+        fixture: checking,
+        id: 'txn_103',
+        title: 'Carrefour',
+        category: 'groceries',
+        amountMinor: -8620,
+        occurredAt: at(1, 19, 5),
+      ),
+      _record(
+        fixture: checking,
+        id: 'txn_104',
+        title: 'Salary \u2014 Vaulta Labs',
+        category: 'salary',
+        amountMinor: 425000,
+        occurredAt: at(1, 9, 0),
+      ),
+      _record(
+        fixture: checking,
+        id: 'txn_105',
+        title: 'Netflix',
+        category: 'entertainment',
+        amountMinor: -1599,
+        occurredAt: at(2, 20, 15),
+      ),
+      _record(
+        fixture: checking,
+        id: 'txn_106',
+        title: 'To Savings',
+        category: 'transfer',
+        amountMinor: -50000,
+        occurredAt: at(3, 11, 30),
+      ),
+      _record(
+        fixture: checking,
+        id: 'txn_107',
+        title: 'Amazon',
+        category: 'shopping',
+        amountMinor: -6213,
+        occurredAt: at(4, 16, 45),
+      ),
+      _record(
+        fixture: amman,
+        id: 'txn_108',
+        title: 'Zain',
+        category: 'utilities',
+        amountMinor: -24500,
+        occurredAt: at(5, 13, 20),
+      ),
+    ];
+  }
+
+  /// Deterministic backlog behind the curated recents: ~8 months of daily
+  /// activity per account, seeded per account with the content-stable
+  /// hash. Checking accounts get a monthly salary; the savings account
+  /// gets its monthly inbound transfer (matching its sparkline) plus the
+  /// occasional interest credit. Starts 6 days back so the curated
+  /// entries own the recent window.
+  List<Map<String, dynamic>> _syntheticTransactions({
+    required _AccountFixture fixture,
+    required DateTime today,
+  }) {
+    final rng = math.Random(_seed('${fixture.id}:txns'));
+    final base = math.max(1000, fixture.balanceMinor.abs() ~/ 70);
+    final txns = <Map<String, dynamic>>[];
+
+    for (var daysBack = 6; daysBack <= 240; daysBack++) {
+      final day = today.subtract(Duration(days: daysBack));
+
+      if (fixture.type == 'savings') {
+        if (day.day == 1) {
+          txns.add(
+            _record(
+              fixture: fixture,
+              id: 'txn_${fixture.id}_${daysBack}_in',
+              title: 'From Main Checking',
+              category: 'transfer',
+              amountMinor: 25000,
+              occurredAt: DateTime(day.year, day.month, day.day, 9),
+            ),
+          );
+        }
+        if (rng.nextInt(100) < 3) {
+          txns.add(
+            _record(
+              fixture: fixture,
+              id: 'txn_${fixture.id}_${daysBack}_int',
+              title: 'Interest',
+              category: 'other',
+              amountMinor: base ~/ 8 + rng.nextInt(math.max(1, base ~/ 4)),
+              occurredAt: DateTime(day.year, day.month, day.day, 6),
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (day.day == 27) {
+        txns.add(
+          _record(
+            fixture: fixture,
+            id: 'txn_${fixture.id}_${daysBack}_salary',
+            title: 'Salary \u2014 Vaulta Labs',
+            category: 'salary',
+            amountMinor: base * 25,
+            occurredAt: DateTime(day.year, day.month, day.day, 9),
+          ),
+        );
+      }
+
+      final roll = rng.nextInt(100);
+      final count = roll < 25 ? 0 : (roll < 80 ? 1 : 2);
+      for (var i = 0; i < count; i++) {
+        final (title, category) = _merchants[rng.nextInt(_merchants.length)];
+        final failed = rng.nextInt(100) < 2;
+        txns.add(
+          _record(
+            fixture: fixture,
+            id: 'txn_${fixture.id}_${daysBack}_$i',
+            title: title,
+            category: category,
+            amountMinor: -(base ~/ 5 + rng.nextInt(base)),
+            occurredAt: DateTime(
+              day.year,
+              day.month,
+              day.day,
+              8 + rng.nextInt(13),
+              rng.nextInt(60),
+            ),
+            status: failed ? 'failed' : 'completed',
+          ),
+        );
+      }
+    }
+    return txns;
+  }
+
+  /// Walks the sorted pool newest → oldest per account: a settled entry's
+  /// `balanceAfterMinor` is the running balance, which then rewinds by the
+  /// entry's amount — so the newest settled entry lands exactly on the
+  /// fixture balance and the chain stays internally consistent (the same
+  /// invariant the statements generator keeps). Pending and failed entries
+  /// never moved the ledger, so they carry no balance.
+  void _applyRunningBalances(List<Map<String, dynamic>> sortedDesc) {
+    final running = {
+      for (final fixture in _accountFixtures) fixture.id: fixture.balanceMinor,
+    };
+    for (final txn in sortedDesc) {
+      if (txn['status'] != 'completed') continue;
+      final accountId = txn['accountId'] as String;
+      final balance = running[accountId];
+      if (balance == null) continue;
+      txn['balanceAfterMinor'] = balance;
+      running[accountId] = balance - (txn['amountMinor'] as int);
+    }
+  }
+
+  Map<String, dynamic> _record({
+    required _AccountFixture fixture,
+    required String id,
+    required String title,
+    required String category,
+    required int amountMinor,
+    required DateTime occurredAt,
+    String status = 'completed',
+  }) {
+    return {
+      'id': id,
+      'accountId': fixture.id,
+      'title': title,
+      'category': category,
+      'amountMinor': amountMinor,
+      'currency': fixture.currency,
+      'occurredAt': occurredAt.toIso8601String(),
+      'status': status,
+      'reference': 'VLT-${occurredAt.year}-${_seed(id) % 900000 + 100000}',
+    };
+  }
+
+  String _encodeCursor(String occurredAt, String id) =>
+      base64Url.encode(utf8.encode('$occurredAt|$id'));
+
+  (String, String)? _decodeCursor(String cursor) {
+    try {
+      final decoded = utf8.decode(base64Url.decode(cursor));
+      final split = decoded.lastIndexOf('|');
+      if (split <= 0) return null;
+      return (decoded.substring(0, split), decoded.substring(split + 1));
+    } on FormatException {
+      return null;
+    }
   }
 
   /// Deterministic pseudo-random daily deltas, seeded per (account, window)
@@ -545,28 +871,6 @@ class MockApiInterceptor extends Interceptor {
           'balanceMinor': balances[i],
         },
     ];
-  }
-
-  Map<String, dynamic> _txn({
-    required String id,
-    required String accountId,
-    required String title,
-    required String category,
-    required int amountMinor,
-    required String currency,
-    required DateTime occurredAt,
-    String status = 'completed',
-  }) {
-    return {
-      'id': id,
-      'accountId': accountId,
-      'title': title,
-      'category': category,
-      'amountMinor': amountMinor,
-      'currency': currency,
-      'occurredAt': occurredAt.toIso8601String(),
-      'status': status,
-    };
   }
 
   Map<String, dynamic> _issueTokens() {

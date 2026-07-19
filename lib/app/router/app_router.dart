@@ -12,6 +12,9 @@ import 'package:vaulta/features/auth/presentation/screens/otp_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/splash_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/unlock_screen.dart';
 import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
+import 'package:vaulta/features/transactions/presentation/screens/transaction_detail_screen.dart';
+import 'package:vaulta/features/transactions/presentation/screens/transactions_screen.dart';
+import 'package:vaulta/features/transactions/presentation/transactions_paths.dart';
 
 part 'app_router.g.dart';
 
@@ -103,6 +106,24 @@ GoRouter appRouter(Ref ref) {
                     path: ':id',
                     builder: (context, state) => AccountDetailScreen(
                       accountId: state.pathParameters['id'] ?? '',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: TransactionsPaths.root,
+                builder: (context, state) => TransactionsScreen(
+                  initialAccountId: state.uri.queryParameters['account'],
+                ),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => TransactionDetailScreen(
+                      transactionId: state.pathParameters['id'] ?? '',
                     ),
                   ),
                 ],
