@@ -82,16 +82,74 @@ class MockApiInterceptor extends Interceptor {
     ('Pharmacy One', 'other'),
   ];
 
+  /// Cards FK into [_accountFixtures] — never parallel account ids.
+  /// `crd_jod_phys` doubles as the JOD limits canary (3 minor digits) and
+  /// starts frozen so the unfreeze path is visible without setup. The
+  /// savings account deliberately has no card. Schema sketch (§6.14):
+  ///
+  ///     cards(id pk, account_id fk, label, type, network, status,
+  ///           pan, cvv, expiry_month int, expiry_year int,
+  ///           daily_limit_minor bigint, monthly_limit_minor bigint)
+  ///     -- spent_today/spent_this_month are views over transactions in
+  ///     -- prod; the mock materializes seed-stable stand-ins.
+  static const _cardFixtures = <_CardFixture>[
+    _CardFixture(
+      id: 'crd_chk_phys',
+      accountId: 'acc_chk',
+      label: 'Everyday',
+      type: 'physical',
+      network: 'visa',
+      expiryMonth: 9,
+      expiryYear: 2028,
+      dailyLimitMinor: 50000,
+      monthlyLimitMinor: 1200000,
+    ),
+    _CardFixture(
+      id: 'crd_chk_virt',
+      accountId: 'acc_chk',
+      label: 'Online shopping',
+      type: 'virtual',
+      network: 'mastercard',
+      expiryMonth: 3,
+      expiryYear: 2027,
+      dailyLimitMinor: 25000,
+      monthlyLimitMinor: 400000,
+    ),
+    _CardFixture(
+      id: 'crd_jod_phys',
+      accountId: 'acc_jod',
+      label: 'Amman debit',
+      type: 'physical',
+      network: 'mastercard',
+      expiryMonth: 11,
+      expiryYear: 2027,
+      dailyLimitMinor: 150000,
+      monthlyLimitMinor: 2500000,
+      initialStatus: 'frozen',
+    ),
+  ];
+
   static final _historyPath = RegExp(r'^/accounts/([^/]+)/history$');
   static final _statementsPath = RegExp(r'^/accounts/([^/]+)/statements$');
   static final _statementDetailPath =
       RegExp(r'^/accounts/([^/]+)/statements/([^/]+)$');
   static final _transactionDetailPath = RegExp(r'^/transactions/([^/]+)$');
   static final _disputePath = RegExp(r'^/transactions/([^/]+)/dispute$');
+  static final _cardFreezePath = RegExp(r'^/cards/([^/]+)/freeze$');
+  static final _cardUnfreezePath = RegExp(r'^/cards/([^/]+)/unfreeze$');
+  static final _cardRevealPath = RegExp(r'^/cards/([^/]+)/reveal$');
+  static final _cardLimitsPath = RegExp(r'^/cards/([^/]+)/limits$');
 
   final _challenges = <String, String>{}; // challengeId → email
   var _counter = 0;
   String? _sessionEmail;
+
+  /// Session-scoped card mutations layered over the fixtures: freezing a
+  /// card or changing its limits must persist across subsequent `GET
+  /// /cards` calls within the run, exactly like a stateful backend —
+  /// while the deterministic base stays untouched.
+  final _cardStatusOverrides = <String, String>{};
+  final _cardLimitOverrides = <String, (int, int)>{};
 
   /// Day-cached transaction pool — see [_transactionPool].
   DateTime? _poolDay;
@@ -134,6 +192,7 @@ class MockApiInterceptor extends Interceptor {
       'GET /dashboard/summary' => _dashboardSummary(options),
       'GET /accounts' => _accountsList(options),
       'GET /transactions' => _transactions(options),
+      'GET /cards' => _cardsList(options),
       _ => null,
     };
     if (exact != null) return exact;
@@ -141,6 +200,19 @@ class MockApiInterceptor extends Interceptor {
     if (method == 'POST') {
       final dispute = _disputePath.firstMatch(path);
       if (dispute != null) return _submitDispute(options, dispute[1]!);
+      final freeze = _cardFreezePath.firstMatch(path);
+      if (freeze != null) return _setCardFrozen(options, freeze[1]!, true);
+      final unfreeze = _cardUnfreezePath.firstMatch(path);
+      if (unfreeze != null) {
+        return _setCardFrozen(options, unfreeze[1]!, false);
+      }
+      final reveal = _cardRevealPath.firstMatch(path);
+      if (reveal != null) return _revealCardPan(options, reveal[1]!);
+      return null;
+    }
+    if (method == 'PATCH') {
+      final limits = _cardLimitsPath.firstMatch(path);
+      if (limits != null) return _updateCardLimits(options, limits[1]!);
       return null;
     }
     if (method != 'GET') return null;
@@ -421,6 +493,136 @@ class MockApiInterceptor extends Interceptor {
       'transactionId': transactionId,
       'status': 'received',
     });
+  }
+
+  Response<dynamic> _cardsList(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    return _respond(options, 200, {
+      'cards': [for (final fixture in _cardFixtures) _card(fixture)],
+    });
+  }
+
+  Response<dynamic> _setCardFrozen(
+    RequestOptions options,
+    String cardId,
+    bool frozen,
+  ) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final fixture = _cardFixtureById(cardId);
+    if (fixture == null) return _notFound(options);
+    // Idempotent by construction: repeating either verb lands on the same
+    // state, matching the data-source contract.
+    _cardStatusOverrides[cardId] = frozen ? 'frozen' : 'active';
+    return _respond(options, 200, _card(fixture));
+  }
+
+  Response<dynamic> _updateCardLimits(RequestOptions options, String cardId) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final fixture = _cardFixtureById(cardId);
+    if (fixture == null) return _notFound(options);
+
+    final body = _body(options);
+    final daily = body['dailyMinor'];
+    final monthly = body['monthlyMinor'];
+    if (daily is! int || monthly is! int || daily <= 0 || monthly <= 0) {
+      return _respond(options, 422, {
+        'message': 'Invalid limits',
+        'errors': {
+          'limits': ['Limits must be positive amounts'],
+        },
+      });
+    }
+    if (daily > monthly) {
+      return _respond(options, 422, {
+        'message': 'Invalid limits',
+        'errors': {
+          'dailyMinor': ['Daily limit cannot exceed the monthly limit'],
+        },
+      });
+    }
+    _cardLimitOverrides[cardId] = (daily, monthly);
+    return _respond(options, 200, _card(fixture));
+  }
+
+  Response<dynamic> _revealCardPan(RequestOptions options, String cardId) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final fixture = _cardFixtureById(cardId);
+    if (fixture == null) return _notFound(options);
+    final pan = _cardPan(fixture);
+    return _respond(options, 200, {
+      'cardId': fixture.id,
+      'pan': pan,
+      'cvv': (_seed('${fixture.id}:cvv') % 900 + 100).toString(),
+      'expiryMonth': fixture.expiryMonth,
+      'expiryYear': fixture.expiryYear,
+    });
+  }
+
+  Map<String, dynamic> _card(_CardFixture fixture) {
+    final account = _fixtureById(fixture.accountId)!;
+    final pan = _cardPan(fixture);
+    final (dailyMinor, monthlyMinor) = _cardLimitOverrides[fixture.id] ??
+        (fixture.dailyLimitMinor, fixture.monthlyLimitMinor);
+    // Seed-stable usage under the *base* limits, so lowering a limit can
+    // legitimately push utilisation to 100% (the UI clamps the bar).
+    final spentToday =
+        _seed('${fixture.id}:today') % (fixture.dailyLimitMinor ~/ 2);
+    final spentThisMonth = fixture.dailyLimitMinor ~/ 2 +
+        _seed('${fixture.id}:month') % (fixture.monthlyLimitMinor ~/ 2);
+    return {
+      'id': fixture.id,
+      'accountId': fixture.accountId,
+      'label': fixture.label,
+      'type': fixture.type,
+      'network': fixture.network,
+      'status': _cardStatusOverrides[fixture.id] ?? fixture.initialStatus,
+      'panLast4': pan.substring(pan.length - 4),
+      'expiryMonth': fixture.expiryMonth,
+      'expiryYear': fixture.expiryYear,
+      'currency': account.currency,
+      'limits': {
+        'dailyMinor': dailyMinor,
+        'monthlyMinor': monthlyMinor,
+        'spentTodayMinor': spentToday,
+        'spentThisMonthMinor': spentThisMonth,
+      },
+    };
+  }
+
+  /// Deterministic, Luhn-valid PAN: network prefix + `_seed`-driven body
+  /// + computed check digit. `panLast4` in the card list is derived from
+  /// the same value, so a reveal always matches the mask — like a real
+  /// issuer, and asserted by the pipeline tests.
+  String _cardPan(_CardFixture fixture) {
+    final rng = math.Random(_seed('${fixture.id}:pan'));
+    final buffer = StringBuffer(fixture.network == 'visa' ? '4' : '52');
+    while (buffer.length < 15) {
+      buffer.write(rng.nextInt(10));
+    }
+    final partial = buffer.toString();
+    return '$partial${_luhnCheckDigit(partial)}';
+  }
+
+  int _luhnCheckDigit(String partial) {
+    var sum = 0;
+    var doubleIt = true; // rightmost partial digit doubles once appended
+    for (var i = partial.length - 1; i >= 0; i--) {
+      var digit = partial.codeUnitAt(i) - 0x30;
+      if (doubleIt) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      doubleIt = !doubleIt;
+    }
+    return (10 - sum % 10) % 10;
+  }
+
+  _CardFixture? _cardFixtureById(String id) {
+    for (final fixture in _cardFixtures) {
+      if (fixture.id == id) return fixture;
+    }
+    return null;
   }
 
   _AccountFixture? _fixtureById(String id) {
@@ -935,4 +1137,33 @@ class _AccountFixture {
 
   /// The 14-point sparkline history shown on the dashboard.
   final List<int> dashboardDeltasMinor;
+}
+
+/// Canonical card row — the mock's stand-in for the `cards` table.
+class _CardFixture {
+  const _CardFixture({
+    required this.id,
+    required this.accountId,
+    required this.label,
+    required this.type,
+    required this.network,
+    required this.expiryMonth,
+    required this.expiryYear,
+    required this.dailyLimitMinor,
+    required this.monthlyLimitMinor,
+    this.initialStatus = 'active',
+  });
+
+  final String id;
+  final String accountId;
+  final String label;
+  final String type;
+  final String network;
+  final int expiryMonth;
+  final int expiryYear;
+  final int dailyLimitMinor;
+  final int monthlyLimitMinor;
+
+  /// Base status; session freeze/unfreeze overrides layer on top.
+  final String initialStatus;
 }

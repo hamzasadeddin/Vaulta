@@ -11,6 +11,9 @@ import 'package:vaulta/features/auth/presentation/screens/login_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/otp_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/splash_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/unlock_screen.dart';
+import 'package:vaulta/features/cards/presentation/cards_paths.dart';
+import 'package:vaulta/features/cards/presentation/screens/card_detail_screen.dart';
+import 'package:vaulta/features/cards/presentation/screens/cards_screen.dart';
 import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
 import 'package:vaulta/features/transactions/presentation/screens/transaction_detail_screen.dart';
 import 'package:vaulta/features/transactions/presentation/screens/transactions_screen.dart';
@@ -124,6 +127,24 @@ GoRouter appRouter(Ref ref) {
                     path: ':id',
                     builder: (context, state) => TransactionDetailScreen(
                       transactionId: state.pathParameters['id'] ?? '',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          // Appended last (Phase 7) so the existing branch indices — which
+          // AppShell pins as constants — are untouched.
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: CardsPaths.root,
+                builder: (context, state) => const CardsScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => CardDetailScreen(
+                      cardId: state.pathParameters['id'] ?? '',
                     ),
                   ),
                 ],

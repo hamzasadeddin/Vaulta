@@ -7,6 +7,7 @@ import 'package:vaulta/core/network/auth_tokens.dart';
 import 'package:vaulta/core/network/interceptors/auth_interceptor.dart';
 import 'package:vaulta/core/network/interceptors/idempotency_interceptor.dart';
 import 'package:vaulta/core/network/mock/mock_api_interceptor.dart';
+import 'package:vaulta/core/network/sensitive.dart';
 
 /// Builds the app's single [Dio] instance.
 ///
@@ -55,7 +56,15 @@ Dio buildDio({
     if (config.enableNetworkLogs)
       // Headers (Authorization / Idempotency-Key) stay unlogged:
       // TalkerDioLoggerSettings defaults keep them off; never enable them.
-      TalkerDioLogger(talker: talker),
+      // Response bodies marked sensitive (card PAN/CVV reveals) are
+      // dropped wholesale — see core/network/sensitive.dart.
+      TalkerDioLogger(
+        talker: talker,
+        settings: TalkerDioLoggerSettings(
+          responseFilter: (response) =>
+              response.requestOptions.extra[kSensitiveResponseBody] != true,
+        ),
+      ),
     if (mockApi != null) mockApi,
   ]);
 

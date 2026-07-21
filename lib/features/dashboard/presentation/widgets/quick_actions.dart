@@ -1,30 +1,50 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:vaulta/design_system/design_system.dart';
+// Presentation-only navigation into the cards feature (the feature owns
+// its paths so no app-layer import cycle is created).
+import 'package:vaulta/features/cards/presentation/cards_paths.dart';
 
-/// Four shortcuts under the balance card. Their destinations arrive in
-/// later phases; until then each explains itself with a snackbar.
+/// Four shortcuts under the balance card. Cards is live (Phase 7); the
+/// rest arrive in later phases and explain themselves with a snackbar
+/// until then.
 class QuickActions extends StatelessWidget {
   const QuickActions({super.key});
 
-  static const List<({IconData icon, String label, String feature})> _actions =
-      [
-    (icon: LucideIcons.arrowUpRight, label: 'Send', feature: 'Transfers'),
-    (icon: LucideIcons.plus, label: 'Add money', feature: 'Top-ups'),
-    (icon: LucideIcons.creditCard, label: 'Cards', feature: 'Cards'),
-    (icon: LucideIcons.fileText, label: 'Statements', feature: 'Statements'),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final actions = <({IconData icon, String label, VoidCallback onTap})>[
+      (
+        icon: LucideIcons.arrowUpRight,
+        label: 'Send',
+        onTap: () => _comingSoon(context, 'Transfers'),
+      ),
+      (
+        icon: LucideIcons.plus,
+        label: 'Add money',
+        onTap: () => _comingSoon(context, 'Top-ups'),
+      ),
+      (
+        icon: LucideIcons.creditCard,
+        label: 'Cards',
+        onTap: () => context.go(CardsPaths.root),
+      ),
+      (
+        icon: LucideIcons.fileText,
+        label: 'Statements',
+        onTap: () => _comingSoon(context, 'Statements'),
+      ),
+    ];
+
     return Row(
       children: [
-        for (final action in _actions)
+        for (final action in actions)
           Expanded(
             child: _QuickAction(
               icon: action.icon,
               label: action.label,
-              onTap: () => _comingSoon(context, action.feature),
+              onTap: action.onTap,
             ),
           ),
       ],

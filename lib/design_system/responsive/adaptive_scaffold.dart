@@ -21,7 +21,19 @@ class AdaptiveDestination {
 ///
 /// The decision is made with [LayoutBuilder], so the shell adapts to split
 /// screen and window resizing, not just device class.
-class AdaptiveScaffold extends StatelessWidget {
+///
+/// **GlobalKey safety.** [body] typically holds a `StatefulNavigationShell`,
+/// which carries its own `GlobalKey`. Crossing a breakpoint swaps in a
+/// structurally different `Scaffold` subtree, moving [body] to a different
+/// position (direct `Scaffold.body` when compact, `Row` child in rail mode).
+/// Because [LayoutBuilder] can build the incoming subtree before the outgoing
+/// one is unmounted, that key could briefly exist twice in a single frame —
+/// the "duplicate GlobalKey" crash. Wrapping [body] in a `KeyedSubtree` with a
+/// *stable* key of our own gives the primary content one element identity that
+/// Flutter reparents wholesale across the swap, instead of tearing it down and
+/// rebuilding it (which is what duplicates the inner key). The key must outlive
+/// rebuilds, so this is a [StatefulWidget].
+class AdaptiveScaffold extends StatefulWidget {
   const AdaptiveScaffold({
     required this.destinations,
     required this.selectedIndex,
@@ -45,29 +57,39 @@ class AdaptiveScaffold extends StatelessWidget {
   final Widget? floatingActionButton;
 
   @override
+  State<AdaptiveScaffold> createState() => _AdaptiveScaffoldState();
+}
+
+class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
+  // Stable across breakpoint swaps so the primary content (and any GlobalKey
+  // it holds) is reparented, never rebuilt, when the layout changes shape.
+  final GlobalKey _bodyKey = GlobalKey(debugLabel: 'adaptive-scaffold-body');
+
+  @override
   Widget build(BuildContext context) {
+    final keyedBody = KeyedSubtree(key: _bodyKey, child: widget.body);
     return LayoutBuilder(
       builder: (context, constraints) {
         final breakpoint = Breakpoint.fromWidth(constraints.maxWidth);
         return switch (breakpoint) {
-          Breakpoint.compact => _buildCompact(),
-          Breakpoint.medium => _buildWithRail(extended: false),
-          Breakpoint.expanded => _buildWithRail(extended: true),
+          Breakpoint.compact => _buildCompact(keyedBody),
+          Breakpoint.medium => _buildWithRail(keyedBody, extended: false),
+          Breakpoint.expanded => _buildWithRail(keyedBody, extended: true),
         };
       },
     );
   }
 
-  Widget _buildCompact() {
+  Widget _buildCompact(Widget body) {
     return Scaffold(
-      appBar: appBar,
+      appBar: widget.appBar,
       body: body,
-      floatingActionButton: floatingActionButton,
+      floatingActionButton: widget.floatingActionButton,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: selectedIndex,
-        onDestinationSelected: onDestinationSelected,
+        selectedIndex: widget.selectedIndex,
+        onDestinationSelected: widget.onDestinationSelected,
         destinations: [
-          for (final destination in destinations)
+          for (final destination in widget.destinations)
             NavigationDestination(
               icon: Icon(destination.icon),
               selectedIcon: Icon(destination.selectedIcon ?? destination.icon),
@@ -78,24 +100,24 @@ class AdaptiveScaffold extends StatelessWidget {
     );
   }
 
-  Widget _buildWithRail({required bool extended}) {
-    final secondary = secondaryBody;
+  Widget _buildWithRail(Widget body, {required bool extended}) {
+    final secondary = widget.secondaryBody;
     final showSecondary = extended && secondary != null;
     return Scaffold(
-      appBar: appBar,
-      floatingActionButton: floatingActionButton,
+      appBar: widget.appBar,
+      floatingActionButton: widget.floatingActionButton,
       body: Row(
         children: [
           SafeArea(
             child: NavigationRail(
               extended: extended,
-              selectedIndex: selectedIndex,
-              onDestinationSelected: onDestinationSelected,
+              selectedIndex: widget.selectedIndex,
+              onDestinationSelected: widget.onDestinationSelected,
               labelType: extended
                   ? NavigationRailLabelType.none
                   : NavigationRailLabelType.selected,
               destinations: [
-                for (final destination in destinations)
+                for (final destination in widget.destinations)
                   NavigationRailDestination(
                     icon: Icon(destination.icon),
                     selectedIcon:
