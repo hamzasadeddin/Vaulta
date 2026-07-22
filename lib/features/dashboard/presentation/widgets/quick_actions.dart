@@ -5,10 +5,11 @@ import 'package:vaulta/design_system/design_system.dart';
 // Presentation-only navigation into the cards feature (the feature owns
 // its paths so no app-layer import cycle is created).
 import 'package:vaulta/features/cards/presentation/cards_paths.dart';
+import 'package:vaulta/features/transfers/presentation/transfers_paths.dart';
 
-/// Four shortcuts under the balance card. Cards is live (Phase 7); the
-/// rest arrive in later phases and explain themselves with a snackbar
-/// until then.
+/// Four shortcuts under the balance card. Send (Phase 8) and Cards
+/// (Phase 7) are live; the rest arrive in later phases and explain
+/// themselves with a snackbar until then.
 class QuickActions extends StatelessWidget {
   const QuickActions({super.key});
 
@@ -18,7 +19,9 @@ class QuickActions extends StatelessWidget {
       (
         icon: LucideIcons.arrowUpRight,
         label: 'Send',
-        onTap: () => _comingSoon(context, 'Transfers'),
+        // Pushed, not `go`: the flow sits outside the shell and pops back
+        // here when it finishes.
+        onTap: () => context.push(TransfersPaths.flow),
       ),
       (
         icon: LucideIcons.plus,

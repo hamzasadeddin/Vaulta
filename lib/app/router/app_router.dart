@@ -18,6 +18,7 @@ import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.
 import 'package:vaulta/features/transactions/presentation/screens/transaction_detail_screen.dart';
 import 'package:vaulta/features/transactions/presentation/screens/transactions_screen.dart';
 import 'package:vaulta/features/transactions/presentation/transactions_paths.dart';
+import 'package:vaulta/features/transfers/presentation/screens/transfer_flow_screen.dart';
 
 part 'app_router.g.dart';
 
@@ -96,6 +97,25 @@ GoRouter appRouter(Ref ref) {
               GoRoute(
                 path: AppRoutes.home,
                 builder: (context, state) => const DashboardScreen(),
+                routes: [
+                  // Phase 8. Nested inside the branch, NOT declared
+                  // top-level. On web a pushed top-level route rewrites
+                  // the URL to a location whose match list no longer
+                  // contains the shell, so go_router tears the shell page
+                  // down and builds a fresh one on the way back —
+                  // briefly duplicating the StatefulNavigationShell's
+                  // GlobalKey mid-transition. Nesting keeps the shell in
+                  // the match list at /transfer. This is the same reason
+                  // the cards, accounts and transactions detail routes
+                  // have always been safe: they nest too.
+                  //
+                  // Resolves to '/transfer' because AppRoutes.home is
+                  // '/', so TransfersPaths.flow is unchanged.
+                  GoRoute(
+                    path: 'transfer',
+                    builder: (context, state) => const TransferFlowScreen(),
+                  ),
+                ],
               ),
             ],
           ),

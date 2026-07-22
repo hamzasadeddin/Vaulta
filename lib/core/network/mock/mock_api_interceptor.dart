@@ -129,6 +129,61 @@ class MockApiInterceptor extends Interceptor {
     ),
   ];
 
+  /// Saved payees. IBANs are mod-97 valid so the client's `Iban` parser
+  /// accepts them; currencies are deliberately mixed so the FX path is
+  /// reachable from the default USD account. Schema sketch (§6.14):
+  ///
+  ///     beneficiaries(id pk, name, iban, bank_name, currency char(3))
+  static const _beneficiaryFixtures = <_BeneficiaryFixture>[
+    _BeneficiaryFixture(
+      id: 'ben_layla',
+      name: 'Layla Haddad',
+      iban: 'JO47ARAB0010000000000012009901',
+      bankName: 'Arab Bank',
+      currency: 'JOD',
+    ),
+    _BeneficiaryFixture(
+      id: 'ben_omar',
+      name: 'Omar Nasser',
+      iban: 'JO71HBHO0020000000000012009902',
+      bankName: 'Housing Bank',
+      currency: 'JOD',
+    ),
+    _BeneficiaryFixture(
+      id: 'ben_sara',
+      name: 'Sara Malik',
+      iban: 'JO85CABK0030000000000012009903',
+      bankName: 'Cairo Amman Bank',
+      currency: 'USD',
+    ),
+    _BeneficiaryFixture(
+      id: 'ben_studio',
+      name: 'Meridian Studio',
+      iban: 'JO86ETIH0040000000000012009904',
+      bankName: 'Etihad Bank',
+      currency: 'EUR',
+    ),
+  ];
+
+  /// FX rates as exact integer fractions plus the wire string.
+  ///
+  /// Stored as `(numerator, denominator, wireValue)` rather than a
+  /// `double`: a rate multiplies a balance, so the mock converts with
+  /// integer arithmetic only — the same discipline the client applies
+  /// with `Decimal`. A missing pair means the corridor is unsupported.
+  static const _fxRates = <String, (int, int, String)>{
+    'USD:JOD': (709, 1000, '0.709'),
+    'JOD:USD': (1410, 1000, '1.410'),
+    'USD:EUR': (920, 1000, '0.920'),
+    'EUR:USD': (1087, 1000, '1.087'),
+    'EUR:JOD': (771, 1000, '0.771'),
+    'JOD:EUR': (1297, 1000, '1.297'),
+  };
+
+  /// Cross-currency transfers carry 0.5% of the sent amount; everything
+  /// else is free. One rule, so the fee is trivially reproducible.
+  static const _fxFeeBasisPoints = 50;
+
   static final _historyPath = RegExp(r'^/accounts/([^/]+)/history$');
   static final _statementsPath = RegExp(r'^/accounts/([^/]+)/statements$');
   static final _statementDetailPath =
@@ -139,6 +194,7 @@ class MockApiInterceptor extends Interceptor {
   static final _cardUnfreezePath = RegExp(r'^/cards/([^/]+)/unfreeze$');
   static final _cardRevealPath = RegExp(r'^/cards/([^/]+)/reveal$');
   static final _cardLimitsPath = RegExp(r'^/cards/([^/]+)/limits$');
+  static final _transferConfirmPath = RegExp(r'^/transfers/([^/]+)/confirm$');
 
   final _challenges = <String, String>{}; // challengeId → email
   var _counter = 0;
@@ -150,6 +206,25 @@ class MockApiInterceptor extends Interceptor {
   /// while the deterministic base stays untouched.
   final _cardStatusOverrides = <String, String>{};
   final _cardLimitOverrides = <String, (int, int)>{};
+
+  /// Session-scoped ledger movements. A confirmed transfer debits the
+  /// source and credits an own-account destination here, layered over the
+  /// immutable fixtures exactly like [_cardStatusOverrides] — so balances
+  /// stay internally consistent across `/accounts`, `/dashboard/summary`
+  /// and the transaction feed for the rest of the run.
+  final _balanceOverrides = <String, int>{};
+
+  /// Priced drafts awaiting confirmation: draft id → draft row.
+  final _drafts = <String, _Draft>{};
+
+  /// The idempotency ledger: `Idempotency-Key` → the transfer that key
+  /// produced. This is what makes a retried confirm safe — the second
+  /// request is answered from here and never moves money again.
+  final _transfersByKey = <String, Map<String, dynamic>>{};
+
+  /// Transactions produced by confirmed transfers, newest last. They join
+  /// the shared pool so a transfer shows up in Activity immediately.
+  final _postedTransactions = <Map<String, dynamic>>[];
 
   /// Day-cached transaction pool — see [_transactionPool].
   DateTime? _poolDay;
@@ -193,11 +268,15 @@ class MockApiInterceptor extends Interceptor {
       'GET /accounts' => _accountsList(options),
       'GET /transactions' => _transactions(options),
       'GET /cards' => _cardsList(options),
+      'GET /beneficiaries' => _beneficiaries(options),
+      'POST /transfers' => _createTransfer(options),
       _ => null,
     };
     if (exact != null) return exact;
 
     if (method == 'POST') {
+      final confirm = _transferConfirmPath.firstMatch(path);
+      if (confirm != null) return _confirmTransfer(options, confirm[1]!);
       final dispute = _disputePath.firstMatch(path);
       if (dispute != null) return _submitDispute(options, dispute[1]!);
       final freeze = _cardFreezePath.firstMatch(path);
@@ -308,7 +387,7 @@ class MockApiInterceptor extends Interceptor {
             id: fixture.id,
             name: fixture.name,
             currency: fixture.currency,
-            balanceMinor: fixture.balanceMinor,
+            balanceMinor: _balanceOf(fixture),
             deltasMinor: fixture.dashboardDeltasMinor,
             now: now,
           ),
@@ -333,7 +412,7 @@ class MockApiInterceptor extends Interceptor {
             'type': fixture.type,
             'iban': fixture.iban,
             'currency': fixture.currency,
-            'balanceMinor': fixture.balanceMinor,
+            'balanceMinor': _balanceOf(fixture),
             'openedAt': fixture.openedAt,
           },
       ],
@@ -351,7 +430,7 @@ class MockApiInterceptor extends Interceptor {
       'accountId': fixture.id,
       'currency': fixture.currency,
       'points': _history(
-        endBalanceMinor: fixture.balanceMinor,
+        endBalanceMinor: _balanceOf(fixture),
         deltasMinor: _syntheticDeltas(fixture: fixture, days: days),
         now: DateTime.now(),
       ),
@@ -558,6 +637,372 @@ class MockApiInterceptor extends Interceptor {
     });
   }
 
+  Response<dynamic> _beneficiaries(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    return _respond(options, 200, {
+      'beneficiaries': [
+        for (final fixture in _beneficiaryFixtures)
+          {
+            'id': fixture.id,
+            'name': fixture.name,
+            'iban': fixture.iban,
+            'bankName': fixture.bankName,
+            'currency': fixture.currency,
+          },
+      ],
+    });
+  }
+
+  /// `POST /transfers` — prices a transfer and returns a draft. Nothing
+  /// moves here, so creating several drafts is harmless.
+  ///
+  /// Schema sketch (§6.14):
+  ///
+  ///     transfers(id pk, source_account_id fk, destination_label,
+  ///               destination_detail, destination_account_id fk null,
+  ///               amount_minor bigint, currency char(3),
+  ///               fee_minor bigint, total_debit_minor bigint,
+  ///               destination_amount_minor bigint,
+  ///               destination_currency char(3), rate numeric null,
+  ///               status, reference, note, scheduled_for timestamptz
+  ///               null, created_at timestamptz)
+  ///     transfer_idempotency(key pk, transfer_id fk, created_at)
+  ///       -- unique on key; the confirm endpoint reads it before doing
+  ///       -- any work, which is what makes a retry safe in prod too.
+  Response<dynamic> _createTransfer(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final body = _body(options);
+
+    final source = _fixtureById(body['sourceAccountId'] as String? ?? '');
+    if (source == null) {
+      return _invalid(options, 'destination', 'Pick an account to send from');
+    }
+
+    final amountMinor = body['amountMinor'];
+    if (amountMinor is! int || amountMinor <= 0) {
+      return _invalid(
+        options,
+        'amountMinor',
+        'Enter an amount greater than zero',
+      );
+    }
+
+    final destination = body['destination'];
+    if (destination is! Map<String, dynamic>) {
+      return _invalid(options, 'destination', 'Pick a recipient');
+    }
+
+    final type = destination['type'];
+    _ResolvedDestination? target;
+    if (type == 'own') {
+      final account = _fixtureById(destination['accountId'] as String? ?? '');
+      if (account == null || account.id == source.id) {
+        return _invalid(options, 'destination', 'Pick a different account');
+      }
+      target = _ResolvedDestination(
+        label: account.name,
+        detail: _maskIban(account.iban),
+        currency: account.currency,
+        accountId: account.id,
+      );
+    } else if (type == 'beneficiary') {
+      final payee =
+          _beneficiaryById(destination['beneficiaryId'] as String? ?? '');
+      if (payee == null) {
+        return _invalid(options, 'destination', 'Unknown payee');
+      }
+      target = _ResolvedDestination(
+        label: payee.name,
+        detail: '${payee.bankName} \u00b7 ${_maskIban(payee.iban)}',
+        currency: payee.currency,
+      );
+    } else if (type == 'iban') {
+      final iban = _normalizeIban(destination['iban'] as String? ?? '');
+      if (!_ibanValid(iban)) {
+        return _invalid(options, 'iban', 'That IBAN is not valid');
+      }
+      final holder = (destination['holderName'] as String? ?? '').trim();
+      if (holder.isEmpty) {
+        return _invalid(options, 'destination', 'Enter the payee name');
+      }
+      target = _ResolvedDestination(
+        label: holder,
+        detail: _maskIban(iban),
+        // A raw-IBAN payee settles in the sender's currency here; a real
+        // rail would resolve it from the receiving institution.
+        currency: source.currency,
+      );
+    }
+    if (target == null) {
+      return _invalid(options, 'destination', 'Pick a recipient');
+    }
+
+    DateTime? scheduledFor;
+    final rawSchedule = body['scheduledFor'];
+    if (rawSchedule is String && rawSchedule.isNotEmpty) {
+      final parsed = DateTime.tryParse(rawSchedule);
+      if (parsed == null || !parsed.isAfter(DateTime.now())) {
+        return _invalid(options, 'scheduledFor', 'Pick a future date');
+      }
+      scheduledFor = parsed;
+    }
+
+    var feeMinor = 0;
+    var destinationAmountMinor = amountMinor;
+    String? rateWire;
+    if (source.currency != target.currency) {
+      final rate = _fxRates['${source.currency}:${target.currency}'];
+      if (rate == null) {
+        return _invalid(
+          options,
+          'destination',
+          'That currency corridor is not supported',
+        );
+      }
+      final (numerator, denominator, wire) = rate;
+      rateWire = wire;
+      // Half-up on 0.5%, in integers — no double touches a fee.
+      feeMinor = (amountMinor * _fxFeeBasisPoints + 5000) ~/ 10000;
+      destinationAmountMinor = _convertMinor(
+        amountMinor: amountMinor,
+        from: source.currency,
+        to: target.currency,
+        numerator: numerator,
+        denominator: denominator,
+      );
+    }
+
+    final totalDebitMinor = amountMinor + feeMinor;
+    if (totalDebitMinor > _balanceOf(source)) {
+      return _invalid(
+        options,
+        'amountMinor',
+        'Not enough available balance to cover the amount and fee',
+      );
+    }
+
+    final id = 'trf_${++_counter}';
+    final quote = <String, dynamic>{
+      'id': id,
+      // Issued with the draft, not at send time: a client that is killed
+      // between review and confirm can replay the very same key.
+      'idempotencyKey': 'idem_$id',
+      'sourceAccountId': source.id,
+      'destinationLabel': target.label,
+      'destinationDetail': target.detail,
+      'amountMinor': amountMinor,
+      'currency': source.currency,
+      'feeMinor': feeMinor,
+      'totalDebitMinor': totalDebitMinor,
+      'destinationAmountMinor': destinationAmountMinor,
+      'destinationCurrency': target.currency,
+      'rate': rateWire,
+      'scheduledFor': scheduledFor?.toIso8601String(),
+    };
+    _drafts[id] = _Draft(
+      quote: quote,
+      destinationAccountId: target.accountId,
+      scheduled: scheduledFor != null,
+    );
+    return _respond(options, 201, quote);
+  }
+
+  /// `POST /transfers/:id/confirm` — the only route that moves money.
+  ///
+  /// Idempotency is enforced *before* any work: if the presented
+  /// `Idempotency-Key` has been seen, the original transfer is returned
+  /// unchanged and no balance is touched. That is what makes a retried
+  /// confirm — from `dio_smart_retry`, a double-tap, or a replayed
+  /// outbox entry — safe rather than a double spend.
+  Response<dynamic> _confirmTransfer(RequestOptions options, String draftId) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+
+    final key = _idempotencyKey(options);
+    if (key != null) {
+      final replay = _transfersByKey[key];
+      if (replay != null) return _respond(options, 201, replay);
+    }
+
+    final draft = _drafts[draftId];
+    if (draft == null) return _notFound(options);
+
+    final source = _fixtureById(draft.quote['sourceAccountId'] as String);
+    if (source == null) return _notFound(options);
+
+    final totalDebitMinor = draft.quote['totalDebitMinor'] as int;
+    if (!draft.scheduled && totalDebitMinor > _balanceOf(source)) {
+      return _invalid(
+        options,
+        'amountMinor',
+        'Not enough available balance to cover the amount and fee',
+      );
+    }
+
+    final now = DateTime.now();
+    final transfer = <String, dynamic>{
+      ...draft.quote,
+      'reference': 'VLT-${now.year}-${_seed(draftId) % 900000 + 100000}',
+      'status': draft.scheduled ? 'scheduled' : 'completed',
+      'createdAt': now.toIso8601String(),
+    };
+
+    if (!draft.scheduled) {
+      _applyTransfer(
+        draft: draft,
+        source: source,
+        at: now,
+        reference: transfer['reference'] as String,
+      );
+      transfer['balanceAfterMinor'] = _balanceOf(source);
+    }
+
+    // The draft is single-use: consuming it means even a caller that
+    // omits the header entirely cannot confirm the same draft twice.
+    _drafts.remove(draftId);
+    if (key != null) _transfersByKey[key] = transfer;
+    return _respond(options, 201, transfer);
+  }
+
+  /// Moves the money and posts the ledger rows.
+  void _applyTransfer({
+    required _Draft draft,
+    required _AccountFixture source,
+    required DateTime at,
+    required String reference,
+  }) {
+    final quote = draft.quote;
+    final totalDebitMinor = quote['totalDebitMinor'] as int;
+    _balanceOverrides[source.id] = _balanceOf(source) - totalDebitMinor;
+    _postedTransactions.add({
+      'id': 'txn_${quote['id']}_out',
+      'accountId': source.id,
+      'title': 'To ${quote['destinationLabel']}',
+      'category': 'transfer',
+      'amountMinor': -totalDebitMinor,
+      'currency': source.currency,
+      'occurredAt': at.toIso8601String(),
+      'status': 'completed',
+      'reference': reference,
+    });
+
+    final destinationId = draft.destinationAccountId;
+    final destination =
+        destinationId == null ? null : _fixtureById(destinationId);
+    if (destination != null) {
+      final credited = quote['destinationAmountMinor'] as int;
+      _balanceOverrides[destination.id] = _balanceOf(destination) + credited;
+      _postedTransactions.add({
+        'id': 'txn_${quote['id']}_in',
+        'accountId': destination.id,
+        'title': 'From ${source.name}',
+        'category': 'transfer',
+        'amountMinor': credited,
+        'currency': destination.currency,
+        'occurredAt': at.toIso8601String(),
+        'status': 'completed',
+        'reference': reference,
+      });
+    }
+
+    // The pool caches a day of rows and derives running balances from the
+    // account balances — both just changed, so it has to be rebuilt.
+    _pool = null;
+  }
+
+  /// Exact minor-unit conversion: `amount * rate`, carried entirely in
+  /// integers and rounded half-up once, at the end.
+  int _convertMinor({
+    required int amountMinor,
+    required String from,
+    required String to,
+    required int numerator,
+    required int denominator,
+  }) {
+    final sourceDigits = _minorDigits(from);
+    final destinationDigits = _minorDigits(to);
+    var scaledNumerator = amountMinor * numerator;
+    var scaledDenominator = denominator;
+    if (destinationDigits >= sourceDigits) {
+      scaledNumerator *= _pow10(destinationDigits - sourceDigits);
+    } else {
+      scaledDenominator *= _pow10(sourceDigits - destinationDigits);
+    }
+    return (scaledNumerator + scaledDenominator ~/ 2) ~/ scaledDenominator;
+  }
+
+  static int _minorDigits(String code) => switch (code) {
+        'JOD' => 3,
+        'JPY' => 0,
+        _ => 2,
+      };
+
+  static int _pow10(int exponent) {
+    var result = 1;
+    for (var i = 0; i < exponent; i++) {
+      result *= 10;
+    }
+    return result;
+  }
+
+  /// Case-insensitive header lookup — deliberately not relying on the
+  /// header map's own casing behaviour.
+  String? _idempotencyKey(RequestOptions options) {
+    for (final entry in options.headers.entries) {
+      if (entry.key.toLowerCase() != 'idempotency-key') continue;
+      final value = entry.value;
+      if (value is String && value.isNotEmpty) return value;
+      if (value is List && value.isNotEmpty) return '${value.first}';
+    }
+    return null;
+  }
+
+  static String _normalizeIban(String input) =>
+      input.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '');
+
+  /// The server validates check digits itself; the client's identical
+  /// check is a convenience, never the authority.
+  static bool _ibanValid(String iban) {
+    if (iban.length < 15 || iban.length > 34) return false;
+    if (!RegExp(r'^[A-Z]{2}\d{2}[A-Z0-9]+$').hasMatch(iban)) return false;
+    final rearranged = '${iban.substring(4)}${iban.substring(0, 4)}';
+    var remainder = 0;
+    for (final unit in rearranged.codeUnits) {
+      if (unit >= 0x30 && unit <= 0x39) {
+        remainder = (remainder * 10 + (unit - 0x30)) % 97;
+      } else {
+        remainder = (remainder * 100 + (unit - 0x41 + 10)) % 97;
+      }
+    }
+    return remainder == 1;
+  }
+
+  static String _maskIban(String iban) => iban.length <= 4
+      ? iban
+      : '\u2022\u2022\u2022\u2022 ${iban.substring(iban.length - 4)}';
+
+  _BeneficiaryFixture? _beneficiaryById(String id) {
+    for (final fixture in _beneficiaryFixtures) {
+      if (fixture.id == id) return fixture;
+    }
+    return null;
+  }
+
+  int _balanceOf(_AccountFixture fixture) =>
+      _balanceOverrides[fixture.id] ?? fixture.balanceMinor;
+
+  Response<dynamic> _invalid(
+    RequestOptions options,
+    String field,
+    String message,
+  ) {
+    return _respond(options, 422, {
+      'message': message,
+      'errors': {
+        field: [message],
+      },
+    });
+  }
+
   Map<String, dynamic> _card(_CardFixture fixture) {
     final account = _fixtureById(fixture.accountId)!;
     final pan = _cardPan(fixture);
@@ -648,6 +1093,7 @@ class MockApiInterceptor extends Interceptor {
     // come from DateTime.toIso8601String() with zero microseconds, so they
     // are fixed-width and lexicographic order == chronological order.
     final txns = <Map<String, dynamic>>[
+      ..._postedTransactions,
       ..._recentTransactions(today),
       for (final fixture in _accountFixtures)
         ..._syntheticTransactions(fixture: fixture, today: today),
@@ -837,7 +1283,7 @@ class MockApiInterceptor extends Interceptor {
   /// never moved the ledger, so they carry no balance.
   void _applyRunningBalances(List<Map<String, dynamic>> sortedDesc) {
     final running = {
-      for (final fixture in _accountFixtures) fixture.id: fixture.balanceMinor,
+      for (final fixture in _accountFixtures) fixture.id: _balanceOf(fixture),
     };
     for (final txn in sortedDesc) {
       if (txn['status'] != 'completed') continue;
@@ -1166,4 +1612,54 @@ class _CardFixture {
 
   /// Base status; session freeze/unfreeze overrides layer on top.
   final String initialStatus;
+}
+
+/// Canonical beneficiary row — the mock's stand-in for the
+/// `beneficiaries` table.
+class _BeneficiaryFixture {
+  const _BeneficiaryFixture({
+    required this.id,
+    required this.name,
+    required this.iban,
+    required this.bankName,
+    required this.currency,
+  });
+
+  final String id;
+  final String name;
+  final String iban;
+  final String bankName;
+  final String currency;
+}
+
+/// A priced, unconfirmed transfer. [quote] is exactly what the client was
+/// shown; the other fields are server-side columns the client never sees.
+class _Draft {
+  const _Draft({
+    required this.quote,
+    required this.destinationAccountId,
+    required this.scheduled,
+  });
+
+  final Map<String, dynamic> quote;
+
+  /// Set only for own-account transfers — the leg that gets credited.
+  final String? destinationAccountId;
+
+  final bool scheduled;
+}
+
+/// A destination resolved to the fields pricing and the receipt need.
+class _ResolvedDestination {
+  const _ResolvedDestination({
+    required this.label,
+    required this.detail,
+    required this.currency,
+    this.accountId,
+  });
+
+  final String label;
+  final String detail;
+  final String currency;
+  final String? accountId;
 }
