@@ -16,10 +16,12 @@ const _transactionsBranch = 2;
 /// master-detail secondary pane (rendered by the scaffold on expanded layouts
 /// only).
 ///
-/// The `StatefulNavigationShell` carries a `GlobalKey`. Keeping it stable
-/// across breakpoint swaps is handled inside `AdaptiveScaffold`, which wraps
-/// the body in a `KeyedSubtree` with a stable key of its own — so this widget
-/// hands the shell over directly and can stay stateless.
+/// The `StatefulNavigationShell` carries a `GlobalKey`, so it must never be
+/// handed to anything that would move it between parents. `AdaptiveScaffold`
+/// guarantees that by keeping the body at one fixed position in its layout
+/// at every breakpoint — with no wrapper key of its own, which previously
+/// caused the duplicate-key crash it was meant to prevent. This widget
+/// therefore hands the shell over directly and stays stateless.
 class AppShell extends StatelessWidget {
   const AppShell({required this.navigationShell, super.key});
 
