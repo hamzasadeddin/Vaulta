@@ -60,7 +60,11 @@ GoRouter appRouter(Ref ref) {
         AuthUnknown() => at(AppRoutes.splash),
         Unauthenticated() => at(AppRoutes.login),
         OtpPending() => at(AppRoutes.otp),
-        Locked() => at(AppRoutes.unlock),
+        // No redirect: `LockGate` paints the biometric gate over whatever
+        // is already on screen. Sending the session to `/unlock` here would
+        // tear down the shell route and rebuild it on unlock, which
+        // duplicates the navigation shell's `GlobalKey`.
+        Locked() => null,
         Authenticated() => switch (location) {
             AppRoutes.splash ||
             AppRoutes.login ||
