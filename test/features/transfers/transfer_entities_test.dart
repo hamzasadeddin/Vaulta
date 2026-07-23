@@ -199,4 +199,54 @@ void main() {
       );
     });
   });
+
+  group('TransferQuote price lock', () {
+    final at = DateTime(2026, 7, 22, 10);
+
+    TransferQuote quote({DateTime? expiresAt}) => TransferQuote(
+          id: 'trf_1',
+          idempotencyKey: 'idem_trf_1',
+          sourceAccountId: 'acc_chk',
+          destinationLabel: 'Layla Haddad',
+          destinationDetail: '\u2022\u2022\u2022\u2022 4573',
+          amount: Money.parse('250.00', Currency.usd),
+          fee: Money.parse('1.25', Currency.usd),
+          totalDebit: Money.parse('251.25', Currency.usd),
+          destinationAmount: Money.parse('177.250', Currency.jod),
+          expiresAt: expiresAt,
+        );
+
+    test('an unlocked quote never expires and has no countdown', () {
+      final unlocked = quote();
+
+      expect(unlocked.isLocked, isFalse);
+      expect(unlocked.isExpiredAt(at.add(const Duration(days: 365))), isFalse);
+      expect(unlocked.remainingAt(at), isNull);
+    });
+
+    test('the expiry instant itself counts as expired', () {
+      final locked = quote(expiresAt: at);
+
+      expect(
+        locked.isExpiredAt(at.subtract(const Duration(seconds: 1))),
+        isFalse,
+      );
+      expect(locked.isExpiredAt(at), isTrue);
+      expect(locked.isExpiredAt(at.add(const Duration(seconds: 1))), isTrue);
+    });
+
+    test('remaining time floors at zero rather than going negative', () {
+      final locked = quote(expiresAt: at.add(const Duration(seconds: 90)));
+
+      expect(locked.remainingAt(at), const Duration(seconds: 90));
+      expect(
+        locked.remainingAt(at.add(const Duration(seconds: 89))),
+        const Duration(seconds: 1),
+      );
+      expect(
+        locked.remainingAt(at.add(const Duration(minutes: 5))),
+        Duration.zero,
+      );
+    });
+  });
 }

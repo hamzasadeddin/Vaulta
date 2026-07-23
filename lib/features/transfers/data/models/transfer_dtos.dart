@@ -82,6 +82,8 @@ abstract class TransferQuoteDto with _$TransferQuoteDto {
     required String destinationCurrency,
     String? rate,
     String? scheduledFor,
+    String? expiresAt,
+    int? expiresInSeconds,
   }) = _TransferQuoteDto;
 
   const TransferQuoteDto._();
@@ -89,9 +91,22 @@ abstract class TransferQuoteDto with _$TransferQuoteDto {
   factory TransferQuoteDto.fromJson(Map<String, dynamic> json) =>
       _$TransferQuoteDtoFromJson(json);
 
-  TransferQuote toDomain() {
+  /// [receivedAt] is when this payload landed, and it is what the lock is
+  /// measured from.
+  ///
+  /// The server sends the expiry twice — as an instant and as a duration —
+  /// and the duration wins. A phone whose clock is ten minutes fast would
+  /// read the instant as already past and refuse a perfectly good quote;
+  /// one ten minutes slow would hold a dead price and let the user confirm
+  /// into a 409. The absolute timestamp is only the fallback for a server
+  /// that omitted the TTL.
+  TransferQuote toDomain({DateTime? receivedAt}) {
     final source = Currency.fromCode(currency);
     final destination = Currency.fromCode(destinationCurrency);
+    final seconds = expiresInSeconds;
+    final expiry = seconds != null
+        ? (receivedAt ?? DateTime.now()).add(Duration(seconds: seconds))
+        : (expiresAt == null ? null : DateTime.tryParse(expiresAt!));
     return TransferQuote(
       id: id,
       idempotencyKey: idempotencyKey,
@@ -108,6 +123,7 @@ abstract class TransferQuoteDto with _$TransferQuoteDto {
       rate: rate == null ? null : Decimal.tryParse(rate!),
       scheduledFor:
           scheduledFor == null ? null : DateTime.tryParse(scheduledFor!),
+      expiresAt: expiry,
     );
   }
 }

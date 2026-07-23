@@ -52,6 +52,8 @@ _TransferQuoteDto _$TransferQuoteDtoFromJson(Map<String, dynamic> json) =>
       destinationCurrency: json['destinationCurrency'] as String,
       rate: json['rate'] as String?,
       scheduledFor: json['scheduledFor'] as String?,
+      expiresAt: json['expiresAt'] as String?,
+      expiresInSeconds: (json['expiresInSeconds'] as num?)?.toInt(),
     );
 
 Map<String, dynamic> _$TransferQuoteDtoToJson(_TransferQuoteDto instance) =>
@@ -69,6 +71,8 @@ Map<String, dynamic> _$TransferQuoteDtoToJson(_TransferQuoteDto instance) =>
       'destinationCurrency': instance.destinationCurrency,
       'rate': instance.rate,
       'scheduledFor': instance.scheduledFor,
+      'expiresAt': instance.expiresAt,
+      'expiresInSeconds': instance.expiresInSeconds,
     };
 
 _TransferDto _$TransferDtoFromJson(Map<String, dynamic> json) => _TransferDto(

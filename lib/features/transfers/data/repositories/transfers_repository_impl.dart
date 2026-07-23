@@ -9,10 +9,18 @@ import 'package:vaulta/features/transfers/domain/repositories/transfers_reposito
 /// Remote-only implementation — see the repository contract for why a
 /// quote is never cached.
 class TransfersRepositoryImpl implements TransfersRepository {
-  const TransfersRepositoryImpl({required TransfersRemoteDataSource remote})
-      : _remote = remote;
+  TransfersRepositoryImpl({
+    required TransfersRemoteDataSource remote,
+    DateTime Function()? clock,
+  })  : _remote = remote,
+        _clock = clock ?? DateTime.now;
 
   final TransfersRemoteDataSource _remote;
+
+  /// Stamps the arrival time a quote's TTL is measured from. Injectable so
+  /// expiry behaviour is testable without waiting on a wall clock — the
+  /// same seam `AccountsRepositoryImpl` uses for `fetchedAt`.
+  final DateTime Function() _clock;
 
   @override
   Future<Result<List<Beneficiary>, Failure>> getBeneficiaries() {
@@ -55,7 +63,11 @@ class TransfersRepositoryImpl implements TransfersRepository {
             scheduledFor: request.scheduledFor?.toIso8601String(),
           ),
       };
-      return dto.toDomain();
+      // The clock is read *after* the await, so the lock is measured from
+      // when the price actually arrived rather than from when the request
+      // left — on a slow link those differ by more than the countdown can
+      // afford to be wrong by.
+      return dto.toDomain(receivedAt: _clock());
     });
   }
 

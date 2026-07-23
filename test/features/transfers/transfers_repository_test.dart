@@ -271,4 +271,104 @@ void main() {
       expect(result.valueOrNull!.single.id, 'ben_sara');
     });
   });
+
+  group('quote lock', () {
+    TransferQuoteDto fxDto({String? expiresAt, int? expiresInSeconds}) =>
+        TransferQuoteDto.fromJson({
+          'id': 'trf_1',
+          'idempotencyKey': 'idem_trf_1',
+          'sourceAccountId': 'acc_chk',
+          'destinationLabel': 'Layla Haddad',
+          'destinationDetail': '\u2022\u2022\u2022\u2022 4573',
+          'amountMinor': 25000,
+          'currency': 'USD',
+          'feeMinor': 125,
+          'totalDebitMinor': 25125,
+          'destinationAmountMinor': 177250,
+          'destinationCurrency': 'JOD',
+          'rate': '0.709',
+          if (expiresAt != null) 'expiresAt': expiresAt,
+          if (expiresInSeconds != null) 'expiresInSeconds': expiresInSeconds,
+        });
+
+    test('measures the lock from arrival, not from the server timestamp',
+        () async {
+      final arrived = DateTime(2026, 7, 22, 10);
+      final skewed = TransfersRepositoryImpl(
+        remote: remote,
+        clock: () => arrived,
+      );
+      when(
+        () => remote.create(
+          sourceAccountId: any(named: 'sourceAccountId'),
+          destinationType: any(named: 'destinationType'),
+          amountMinor: any(named: 'amountMinor'),
+          destinationBeneficiaryId: any(named: 'destinationBeneficiaryId'),
+        ),
+      ).thenAnswer(
+        (_) async => fxDto(
+          // A server timestamp an hour off the device clock. If the client
+          // trusted it, this quote would look dead on arrival.
+          expiresAt: '2026-07-22T09:00:00.000',
+          expiresInSeconds: 90,
+        ),
+      );
+
+      final result = await skewed.createTransfer(
+        TransferRequest(
+          sourceAccountId: 'acc_chk',
+          destination: const BeneficiaryDestination('ben_layla'),
+          amount: Money.parse('250.00', Currency.usd),
+        ),
+      );
+
+      final quote = result.valueOrNull!;
+      expect(quote.expiresAt, arrived.add(const Duration(seconds: 90)));
+      expect(quote.isExpiredAt(arrived), isFalse);
+    });
+
+    test('falls back to the absolute timestamp when no TTL is sent', () async {
+      when(
+        () => remote.create(
+          sourceAccountId: any(named: 'sourceAccountId'),
+          destinationType: any(named: 'destinationType'),
+          amountMinor: any(named: 'amountMinor'),
+          destinationBeneficiaryId: any(named: 'destinationBeneficiaryId'),
+        ),
+      ).thenAnswer(
+        (_) async => fxDto(expiresAt: '2026-07-22T10:01:30.000'),
+      );
+
+      final result = await repository.createTransfer(
+        TransferRequest(
+          sourceAccountId: 'acc_chk',
+          destination: const BeneficiaryDestination('ben_layla'),
+          amount: Money.parse('250.00', Currency.usd),
+        ),
+      );
+
+      expect(result.valueOrNull!.expiresAt, DateTime(2026, 7, 22, 10, 1, 30));
+    });
+
+    test('a quote with neither field is simply unlocked', () async {
+      when(
+        () => remote.create(
+          sourceAccountId: any(named: 'sourceAccountId'),
+          destinationType: any(named: 'destinationType'),
+          amountMinor: any(named: 'amountMinor'),
+          destinationBeneficiaryId: any(named: 'destinationBeneficiaryId'),
+        ),
+      ).thenAnswer((_) async => fxDto());
+
+      final result = await repository.createTransfer(
+        TransferRequest(
+          sourceAccountId: 'acc_chk',
+          destination: const BeneficiaryDestination('ben_layla'),
+          amount: Money.parse('250.00', Currency.usd),
+        ),
+      );
+
+      expect(result.valueOrNull!.isLocked, isFalse);
+    });
+  });
 }

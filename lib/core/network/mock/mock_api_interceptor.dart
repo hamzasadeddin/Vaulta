@@ -16,10 +16,19 @@ import 'package:dio/dio.dart';
 /// - OTP code: `123456`
 /// - refresh: any token previously issued by this mock
 class MockApiInterceptor extends Interceptor {
-  MockApiInterceptor({this.latency = const Duration(milliseconds: 350)});
+  MockApiInterceptor({
+    this.latency = const Duration(milliseconds: 350),
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
 
   /// Simulated network delay; pass [Duration.zero] in tests.
   final Duration latency;
+
+  /// Deliberately scoped to the transfer quote lifecycle rather than
+  /// threaded through every route: a test needs to walk past a 90s FX
+  /// hold without sleeping for it, and widening the seam further would
+  /// re-date the day-cached transaction pool for no benefit.
+  final DateTime Function() _clock;
 
   static const otpCode = '123456';
 
@@ -183,6 +192,12 @@ class MockApiInterceptor extends Interceptor {
   /// Cross-currency transfers carry 0.5% of the sent amount; everything
   /// else is free. One rule, so the fee is trivially reproducible.
   static const _fxFeeBasisPoints = 50;
+
+  /// How long a cross-currency price is held. Only FX quotes expire: a
+  /// same-currency transfer has no rate that can move against the bank,
+  /// so locking one would be theatre. 90s is the retail norm — long
+  /// enough to read a review screen, short enough to be a real hedge.
+  static const fxQuoteTtl = Duration(seconds: 90);
 
   static final _historyPath = RegExp(r'^/accounts/([^/]+)/history$');
   static final _statementsPath = RegExp(r'^/accounts/([^/]+)/statements$');
@@ -665,7 +680,8 @@ class MockApiInterceptor extends Interceptor {
   ///               destination_amount_minor bigint,
   ///               destination_currency char(3), rate numeric null,
   ///               status, reference, note, scheduled_for timestamptz
-  ///               null, created_at timestamptz)
+  ///               null, expires_at timestamptz null, created_at
+  ///               timestamptz)
   ///     transfer_idempotency(key pk, transfer_id fk, created_at)
   ///       -- unique on key; the confirm endpoint reads it before doing
   ///       -- any work, which is what makes a retry safe in prod too.
@@ -781,6 +797,12 @@ class MockApiInterceptor extends Interceptor {
       );
     }
 
+    // The lock exists to bound the bank's FX exposure, so it attaches to
+    // the priced rate rather than to the draft: same-currency drafts stay
+    // open indefinitely and their `expires*` fields are absent, which is
+    // also what keeps every Phase 8 same-currency path byte-identical.
+    final expiresAt = rateWire == null ? null : _clock().add(fxQuoteTtl);
+
     final id = 'trf_${++_counter}';
     final quote = <String, dynamic>{
       'id': id,
@@ -798,11 +820,19 @@ class MockApiInterceptor extends Interceptor {
       'destinationCurrency': target.currency,
       'rate': rateWire,
       'scheduledFor': scheduledFor?.toIso8601String(),
+      // Both forms travel. The absolute instant is the audit record and
+      // what a receipt or a support agent would quote; the relative one
+      // is what the client counts down, because a device with a skewed
+      // clock would otherwise show a lock that is already dead or good
+      // for an hour. The client trusts the duration, not the timestamp.
+      'expiresAt': expiresAt?.toIso8601String(),
+      'expiresInSeconds': expiresAt == null ? null : fxQuoteTtl.inSeconds,
     };
     _drafts[id] = _Draft(
       quote: quote,
       destinationAccountId: target.accountId,
       scheduled: scheduledFor != null,
+      expiresAt: expiresAt,
     );
     return _respond(options, 201, quote);
   }
@@ -826,6 +856,21 @@ class MockApiInterceptor extends Interceptor {
     final draft = _drafts[draftId];
     if (draft == null) return _notFound(options);
 
+    // Ordering is the whole point: the replay check above runs *first*, so
+    // a transfer that already settled is still returned from the ledger
+    // long after its quote window closed. Expiry may refuse work that has
+    // not happened yet; it may never retract work that has.
+    final expiresAt = draft.expiresAt;
+    if (expiresAt != null && !_clock().isBefore(expiresAt)) {
+      // Burn the draft. A dead price is not something the client should be
+      // able to keep poking at — it has to ask for a new one.
+      _drafts.remove(draftId);
+      return _respond(options, 409, {
+        'message': 'This quote has expired',
+        'code': 'QUOTE_EXPIRED',
+      });
+    }
+
     final source = _fixtureById(draft.quote['sourceAccountId'] as String);
     if (source == null) return _notFound(options);
 
@@ -841,6 +886,11 @@ class MockApiInterceptor extends Interceptor {
     final now = DateTime.now();
     final transfer = <String, dynamic>{
       ...draft.quote,
+      // A settled transfer has no lock left to describe — the rate it
+      // carries is the rate it got. Leaving a countdown on a receipt
+      // would invite the client to render an expiring one.
+      'expiresAt': null,
+      'expiresInSeconds': null,
       'reference': 'VLT-${now.year}-${_seed(draftId) % 900000 + 100000}',
       'status': draft.scheduled ? 'scheduled' : 'completed',
       'createdAt': now.toIso8601String(),
@@ -1639,6 +1689,7 @@ class _Draft {
     required this.quote,
     required this.destinationAccountId,
     required this.scheduled,
+    this.expiresAt,
   });
 
   final Map<String, dynamic> quote;
@@ -1647,6 +1698,11 @@ class _Draft {
   final String? destinationAccountId;
 
   final bool scheduled;
+
+  /// When the held price dies. `null` on same-currency drafts, which have
+  /// no rate to hold. Server-side truth — the client's countdown is a
+  /// courtesy, this is the gate.
+  final DateTime? expiresAt;
 }
 
 /// A destination resolved to the fields pricing and the receipt need.

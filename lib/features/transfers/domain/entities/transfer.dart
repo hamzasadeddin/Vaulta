@@ -107,6 +107,7 @@ class TransferQuote {
     required this.destinationAmount,
     this.rate,
     this.scheduledFor,
+    this.expiresAt,
   });
 
   final String id;
@@ -137,9 +138,37 @@ class TransferQuote {
 
   final DateTime? scheduledFor;
 
+  /// When the held price dies, or `null` when nothing is held.
+  ///
+  /// Only cross-currency quotes carry a lock — a same-currency transfer
+  /// has no rate that can move, so there is nothing to expire. Computed
+  /// on arrival from the server's *relative* TTL rather than read off its
+  /// timestamp, so a device with a skewed clock still counts down the
+  /// duration the bank actually granted.
+  final DateTime? expiresAt;
+
   bool get isCrossCurrency => amount.currency != destinationAmount.currency;
 
   bool get isScheduled => scheduledFor != null;
+
+  /// Whether this quote holds a price at all.
+  bool get isLocked => expiresAt != null;
+
+  /// The clock is a parameter, not a call to `DateTime.now()`: the domain
+  /// layer stays pure and every expiry test is deterministic.
+  bool isExpiredAt(DateTime now) {
+    final expiry = expiresAt;
+    return expiry != null && !now.isBefore(expiry);
+  }
+
+  /// Time left on the lock, floored at zero. `null` when unlocked, which
+  /// callers render as "no countdown" rather than as "expired".
+  Duration? remainingAt(DateTime now) {
+    final expiry = expiresAt;
+    if (expiry == null) return null;
+    final left = expiry.difference(now);
+    return left.isNegative ? Duration.zero : left;
+  }
 }
 
 /// Outcome of a confirmed transfer.

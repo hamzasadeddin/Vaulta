@@ -35,6 +35,7 @@ TransferQuote _quote({
   String id = 'trf_1',
   String key = 'idem_trf_1',
   DateTime? scheduledFor,
+  DateTime? expiresAt,
 }) =>
     TransferQuote(
       id: id,
@@ -47,6 +48,7 @@ TransferQuote _quote({
       totalDebit: Money.parse('250.00', Currency.usd),
       destinationAmount: Money.parse('250.00', Currency.usd),
       scheduledFor: scheduledFor,
+      expiresAt: expiresAt,
     );
 
 Transfer _transfer() => Transfer(
@@ -447,6 +449,160 @@ void main() {
       await settle();
 
       expect(sub.read().hasError, isTrue);
+    });
+  });
+
+  group('TransferFlow — quote lock', () {
+    final start = DateTime(2026, 7, 22, 10);
+
+    /// Same harness as `readyContainer`, plus a clock the test drives.
+    /// The countdown is stepped with `tick()` rather than by waiting on
+    /// the real `Timer`: a 90-second hold is not something a unit test
+    /// should sit through.
+    Future<(ProviderContainer, void Function(Duration))> lockedContainer({
+      Duration ttl = const Duration(seconds: 90),
+    }) async {
+      var now = start;
+      when(() => transfers.createTransfer(any())).thenAnswer(
+        (_) async => Result.success(_quote(expiresAt: now.add(ttl))),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          transfersRepositoryProvider.overrideWithValue(transfers),
+          accountsRepositoryProvider.overrideWithValue(accounts),
+          transferClockProvider.overrideWithValue(() => now),
+        ],
+      );
+      addTearDown(container.dispose);
+      container
+        ..listen(accountsControllerProvider, (_, __) {})
+        ..listen(transferFlowProvider, (_, __) {});
+      await settle();
+      await settle();
+
+      container.read(transferFlowProvider.notifier)
+        ..selectSource('acc_chk')
+        ..selectDestination(const BeneficiaryDestination('ben_layla'))
+        ..amountChanged('250.00');
+      await container.read(transferFlowProvider.notifier).requestQuote();
+
+      return (container, (Duration by) => now = now.add(by));
+    }
+
+    test('a locked quote arrives with its full window on the clock', () async {
+      final (container, _) = await lockedContainer();
+
+      final state = container.read(transferFlowProvider);
+      expect(state.step, TransferStep.review);
+      expect(state.quoteRemaining, const Duration(seconds: 90));
+      expect(state.quoteIsLocked, isTrue);
+      expect(state.quoteExpired, isFalse);
+    });
+
+    test('an unlocked quote shows no countdown and never expires', () async {
+      when(() => transfers.createTransfer(any()))
+          .thenAnswer((_) async => Result.success(_quote()));
+
+      final container = await readyContainer();
+      final notifier = container.read(transferFlowProvider.notifier)
+        ..selectSource('acc_chk')
+        ..selectDestination(const BeneficiaryDestination('ben_sara'))
+        ..amountChanged('250.00');
+      await notifier.requestQuote();
+      notifier.tick();
+
+      final state = container.read(transferFlowProvider);
+      expect(state.quoteRemaining, isNull);
+      expect(state.quoteIsLocked, isFalse);
+      // The distinction that matters: no lock is not an expired lock.
+      expect(state.quoteExpired, isFalse);
+    });
+
+    test('the countdown falls as the clock advances', () async {
+      final (container, advance) = await lockedContainer();
+      final notifier = container.read(transferFlowProvider.notifier);
+
+      advance(const Duration(seconds: 30));
+      notifier.tick();
+
+      expect(
+        container.read(transferFlowProvider).quoteRemaining,
+        const Duration(seconds: 60),
+      );
+      expect(container.read(transferFlowProvider).quoteExpired, isFalse);
+    });
+
+    test('running out marks the quote expired but keeps it on screen',
+        () async {
+      final (container, advance) = await lockedContainer();
+      final notifier = container.read(transferFlowProvider.notifier);
+
+      advance(const Duration(seconds: 90));
+      notifier.tick();
+
+      final state = container.read(transferFlowProvider);
+      expect(state.quoteRemaining, Duration.zero);
+      expect(state.quoteExpired, isTrue);
+      // The user still needs to see what it was they were about to send.
+      expect(state.quote, isNotNull);
+      expect(state.step, TransferStep.review);
+    });
+
+    test('confirming an expired quote does nothing at all', () async {
+      final (container, advance) = await lockedContainer();
+      final notifier = container.read(transferFlowProvider.notifier);
+      advance(const Duration(seconds: 91));
+      notifier.tick();
+
+      final failure = await notifier.confirm();
+
+      expect(failure, isNull);
+      expect(container.read(transferFlowProvider).step, TransferStep.review);
+      verifyNever(
+        () => transfers.confirmTransfer(
+          transferId: any(named: 'transferId'),
+          idempotencyKey: any(named: 'idempotencyKey'),
+        ),
+      );
+    });
+
+    test('re-quoting replaces the draft, the key and the countdown', () async {
+      final (container, advance) = await lockedContainer();
+      final notifier = container.read(transferFlowProvider.notifier);
+      advance(const Duration(seconds: 90));
+      notifier.tick();
+      expect(container.read(transferFlowProvider).quoteExpired, isTrue);
+
+      when(() => transfers.createTransfer(any())).thenAnswer(
+        (_) async => Result.success(
+          _quote(
+            id: 'trf_2',
+            key: 'idem_trf_2',
+            expiresAt: start.add(const Duration(seconds: 180)),
+          ),
+        ),
+      );
+      final failure = await notifier.refreshQuote();
+
+      expect(failure, isNull);
+      final state = container.read(transferFlowProvider);
+      // A new key is the whole safety property: the dead one must never
+      // be confirmable again.
+      expect(state.quote?.idempotencyKey, 'idem_trf_2');
+      expect(state.quoteExpired, isFalse);
+      expect(state.quoteRemaining, const Duration(seconds: 90));
+      expect(state.step, TransferStep.review);
+    });
+
+    test('editing the amount clears the countdown with the quote', () async {
+      final (container, _) = await lockedContainer();
+
+      container.read(transferFlowProvider.notifier).amountChanged('300.00');
+
+      final state = container.read(transferFlowProvider);
+      expect(state.quote, isNull);
+      expect(state.quoteRemaining, isNull);
+      expect(state.quoteExpired, isFalse);
     });
   });
 }

@@ -427,4 +427,202 @@ void main() {
       );
     });
   });
+
+  group('FX quote lock', () {
+    // A private harness: these tests need to move the server's clock, so
+    // they build their own Dio around a clock-injected mock rather than
+    // reusing the suite-level one.
+    late DateTime now;
+    late Dio locked;
+
+    Future<Response<Map<String, dynamic>>> quoteFx({
+      String source = 'acc_chk',
+      String beneficiary = 'ben_layla', // JOD — forces the USD→JOD corridor
+      int amountMinor = 25000,
+    }) {
+      return locked.post<Map<String, dynamic>>(
+        '/transfers',
+        data: {
+          'sourceAccountId': source,
+          'amountMinor': amountMinor,
+          'destination': {'type': 'beneficiary', 'beneficiaryId': beneficiary},
+        },
+      );
+    }
+
+    Future<Response<Map<String, dynamic>>> confirmOn(String id, String key) {
+      return locked.post<Map<String, dynamic>>(
+        '/transfers/$id/confirm',
+        options: Options(headers: {IdempotencyInterceptor.header: key}),
+      );
+    }
+
+    /// Reads balances from *this* group's server. The suite-level
+    /// `balances()` talks to a different MockApiInterceptor instance with
+    /// its own ledger, so using it here would assert against a server
+    /// that was never asked to move anything.
+    Future<Map<String, int>> held() async {
+      final response = await locked.get<Map<String, dynamic>>('/accounts');
+      final accounts =
+          (response.data!['accounts'] as List).cast<Map<String, dynamic>>();
+      return {
+        for (final account in accounts)
+          account['id'] as String: account['balanceMinor'] as int,
+      };
+    }
+
+    setUp(() async {
+      now = DateTime(2026, 7, 22, 10);
+      final tokens = InMemoryAuthTokenStore();
+      locked = buildDio(
+        config: config,
+        talker: Talker(),
+        tokenStore: tokens,
+        mockApi: MockApiInterceptor(
+          latency: Duration.zero,
+          clock: () => now,
+        ),
+      );
+      final login = await locked.post<Map<String, dynamic>>(
+        '/auth/login',
+        data: {'email': 'sam@example.com', 'password': 'hunter2hunter2'},
+        options: public(),
+      );
+      final verify = await locked.post<Map<String, dynamic>>(
+        '/auth/otp/verify',
+        data: {
+          'challengeId': login.data!['challengeId'],
+          'code': MockApiInterceptor.otpCode,
+        },
+        options: public(),
+      );
+      await tokens.write(
+        AuthTokens(
+          accessToken: verify.data!['accessToken'] as String,
+          refreshToken: verify.data!['refreshToken'] as String,
+        ),
+      );
+    });
+
+    test('a cross-currency quote is held for a bounded window', () async {
+      final quote = (await quoteFx()).data!;
+
+      expect(quote['rate'], isNotNull);
+      expect(
+        quote['expiresInSeconds'],
+        MockApiInterceptor.fxQuoteTtl.inSeconds,
+      );
+      expect(
+        DateTime.parse(quote['expiresAt'] as String),
+        now.add(MockApiInterceptor.fxQuoteTtl),
+      );
+    });
+
+    test('a same-currency quote holds nothing', () async {
+      // ben_sara is USD, so this never touches the corridor.
+      final quote = (await quoteFx(beneficiary: 'ben_sara')).data!;
+
+      expect(quote['rate'], isNull);
+      expect(quote['expiresAt'], isNull);
+      expect(quote['expiresInSeconds'], isNull);
+    });
+
+    test('confirming past the window is refused and moves no money', () async {
+      final quote = (await quoteFx()).data!;
+      final before = await held();
+
+      now = now.add(MockApiInterceptor.fxQuoteTtl + const Duration(seconds: 1));
+
+      await expectLater(
+        confirmOn(quote['id'] as String, quote['idempotencyKey'] as String),
+        throwsA(
+          isA<DioException>()
+              .having((e) => e.response?.statusCode, 'status', 409)
+              .having(
+                (e) => (e.response?.data as Map)['code'],
+                'code',
+                'QUOTE_EXPIRED',
+              ),
+        ),
+      );
+      expect(await held(), before);
+    });
+
+    test('the last second of the window is still confirmable', () async {
+      final quote = (await quoteFx()).data!;
+
+      now = now.add(MockApiInterceptor.fxQuoteTtl - const Duration(seconds: 1));
+      final response = await confirmOn(
+        quote['id'] as String,
+        quote['idempotencyKey'] as String,
+      );
+
+      expect(response.statusCode, 201);
+      expect(response.data!['status'], 'completed');
+    });
+
+    test('an expired draft is burned, not left lying around', () async {
+      final quote = (await quoteFx()).data!;
+      now = now.add(MockApiInterceptor.fxQuoteTtl);
+
+      await expectLater(
+        confirmOn(quote['id'] as String, quote['idempotencyKey'] as String),
+        throwsA(isA<DioException>()),
+      );
+      // Second attempt: the draft is gone entirely, so this is a 404 and
+      // not a second 409 against a draft the server is still holding.
+      await expectLater(
+        confirmOn(quote['id'] as String, quote['idempotencyKey'] as String),
+        throwsA(
+          isA<DioException>()
+              .having((e) => e.response?.statusCode, 'status', 404),
+        ),
+      );
+    });
+
+    test('a settled transfer still replays long after its quote died',
+        () async {
+      final quote = (await quoteFx()).data!;
+      final key = quote['idempotencyKey'] as String;
+      final first = await confirmOn(quote['id'] as String, key);
+      final after = await held();
+
+      // Expiry may refuse work that has not happened. It may never
+      // retract work that has — this is the ordering the confirm handler
+      // encodes, and the reason the idempotency check runs first.
+      now = now.add(const Duration(days: 1));
+      final replay = await confirmOn(quote['id'] as String, key);
+
+      expect(replay.data!['id'], first.data!['id']);
+      expect(replay.data!['reference'], first.data!['reference']);
+      expect(await held(), after);
+    });
+
+    test('a settled transfer carries no lock of its own', () async {
+      final quote = (await quoteFx()).data!;
+      final transfer = await confirmOn(
+        quote['id'] as String,
+        quote['idempotencyKey'] as String,
+      );
+
+      expect(transfer.data!['expiresAt'], isNull);
+      expect(transfer.data!['expiresInSeconds'], isNull);
+    });
+
+    test('re-quoting issues a new draft and a new idempotency key', () async {
+      final first = (await quoteFx()).data!;
+      now = now.add(MockApiInterceptor.fxQuoteTtl);
+      final second = (await quoteFx()).data!;
+
+      expect(second['id'], isNot(first['id']));
+      expect(second['idempotencyKey'], isNot(first['idempotencyKey']));
+      // Same corridor, same amount — the price itself is unchanged, only
+      // the window it is held for.
+      expect(second['destinationAmountMinor'], first['destinationAmountMinor']);
+      expect(
+        DateTime.parse(second['expiresAt'] as String),
+        now.add(MockApiInterceptor.fxQuoteTtl),
+      );
+    });
+  });
 }

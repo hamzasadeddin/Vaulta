@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -41,7 +43,13 @@ class TransferFlowScreen extends ConsumerWidget {
       canPop: atStart || done,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) {
-          notifier.reset();
+          // Deferred by a microtask, not called inline. This callback runs
+          // from inside the Navigator's `didUpdateWidget`, i.e. mid-build,
+          // and `reset()` writes provider state — Riverpod rejects that
+          // outright. A microtask lands immediately after the frame's
+          // synchronous work, before any timer, so the draft is still
+          // cleared promptly.
+          scheduleMicrotask(notifier.reset);
           return;
         }
         notifier.back();

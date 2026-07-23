@@ -58,7 +58,7 @@ final class TransfersRepositoryProvider extends $FunctionalProvider<
 }
 
 String _$transfersRepositoryHash() =>
-    r'aa2ab71cd190a31500d27bb1acb2378a21660ce9';
+    r'3d957d861af35704f134b12bd19cfa1f15c1b7f4';
 
 /// Saved payees for the recipient picker.
 
@@ -177,7 +177,7 @@ final class TransferFlowProvider
   }
 }
 
-String _$transferFlowHash() => r'54140bd520cfd8ccc77c9114f410c334ee017c82';
+String _$transferFlowHash() => r'736d2f20911bf63d2fdda8f909357fa87c1b7557';
 
 /// Drives the recipient → amount → review → receipt flow.
 ///

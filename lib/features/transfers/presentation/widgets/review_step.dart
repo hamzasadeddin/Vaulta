@@ -4,6 +4,7 @@ import 'package:vaulta/core/money/money.dart';
 import 'package:vaulta/design_system/design_system.dart';
 import 'package:vaulta/features/transfers/presentation/failure_copy.dart';
 import 'package:vaulta/features/transfers/presentation/providers/transfers_providers.dart';
+import 'package:vaulta/features/transfers/presentation/widgets/quote_countdown.dart';
 
 /// Step three: the server's priced quote, then a single irreversible tap.
 ///
@@ -12,6 +13,11 @@ import 'package:vaulta/features/transfers/presentation/providers/transfers_provi
 /// also its own double-tap guard: the controller ignores a second confirm
 /// while one is in flight, and the quote's idempotency key means even a
 /// transport-level retry lands on the same transfer.
+///
+/// Cross-currency quotes arrive with a price lock. When it runs out the
+/// confirm is replaced rather than merely disabled — a dead price is not
+/// a button the user should be able to look at and wonder about, and the
+/// only honest next action is to ask for a new one.
 class ReviewStep extends ConsumerWidget {
   const ReviewStep({super.key});
 
@@ -22,8 +28,7 @@ class ReviewStep extends ConsumerWidget {
     final quote = state.quote;
     if (quote == null) return const SizedBox.shrink();
 
-    Future<void> confirm() async {
-      final failure = await ref.read(transferFlowProvider.notifier).confirm();
+    void report(Object? failure) {
       if (failure == null || !context.mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -31,6 +36,12 @@ class ReviewStep extends ConsumerWidget {
           SnackBar(content: Text(transfersFailureCopy(failure))),
         );
     }
+
+    Future<void> confirm() async =>
+        report(await ref.read(transferFlowProvider.notifier).confirm());
+
+    Future<void> requote() async =>
+        report(await ref.read(transferFlowProvider.notifier).refreshQuote());
 
     return ListView(
       padding: EdgeInsets.all(spacing.md),
@@ -46,6 +57,10 @@ class ReviewStep extends ConsumerWidget {
               ),
               SizedBox(height: spacing.xs),
               BalanceText(quote.destinationAmount),
+              if (state.quoteRemaining case final remaining?) ...[
+                SizedBox(height: spacing.sm),
+                QuoteCountdown(remaining: remaining),
+              ],
             ],
           ),
         ),
@@ -79,7 +94,12 @@ class ReviewStep extends ConsumerWidget {
           ),
         ),
         SizedBox(height: spacing.md),
-        if (quote.isScheduled)
+        if (state.quoteExpired)
+          const _Notice(
+            text: 'This rate is no longer available. Nothing has left your '
+                'account \u2014 get a new price to see the current amount.',
+          )
+        else if (quote.isScheduled)
           const _Notice(
             text: 'This transfer is scheduled. Nothing leaves your account '
                 'until then.',
@@ -90,12 +110,23 @@ class ReviewStep extends ConsumerWidget {
                 'undone.',
           ),
         SizedBox(height: spacing.lg),
-        AppButton(
-          label: quote.isScheduled ? 'Schedule transfer' : 'Confirm and send',
-          expand: true,
-          loading: state.busy,
-          onPressed: confirm,
-        ),
+        // No icon on the re-quote button: every Lucide glyph that reads as
+        // "refresh" would be new to this codebase, and a missing glyph is
+        // a release risk for a label that is already unambiguous.
+        if (state.quoteExpired)
+          AppButton(
+            label: 'Get a new price',
+            expand: true,
+            loading: state.busy,
+            onPressed: requote,
+          )
+        else
+          AppButton(
+            label: quote.isScheduled ? 'Schedule transfer' : 'Confirm and send',
+            expand: true,
+            loading: state.busy,
+            onPressed: confirm,
+          ),
       ],
     );
   }

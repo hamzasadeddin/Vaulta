@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:vaulta/core/error/failure.dart';
@@ -23,12 +24,25 @@ import 'package:vaulta/features/transfers/presentation/forms/transfer_inputs.dar
 
 part 'transfers_providers.g.dart';
 
+/// Clock seam for the quote lock. A `Provider` rather than a bare
+/// `DateTime.now` so a test can walk a 90-second FX hold to its last
+/// second without waiting 90 seconds — provider overrides are the only
+/// injection seam in this codebase.
+///
+/// Hand-written rather than `@riverpod`: it holds no state and needs no
+/// disposal, and `overrideWithValue` on a plain `Provider` is the same
+/// shape `core/network` already uses for its own seams.
+final transferClockProvider = Provider<DateTime Function()>(
+  (ref) => DateTime.now,
+);
+
 /// Composition point for the transfers slice. Tests override this with a
 /// mocked [TransfersRepository] — the same seam as every feature.
 @riverpod
 TransfersRepository transfersRepository(Ref ref) {
   return TransfersRepositoryImpl(
     remote: TransfersRemoteDataSource(ref.watch(dioProvider)),
+    clock: ref.watch(transferClockProvider),
   );
 }
 
@@ -82,6 +96,7 @@ class TransferFlowState {
     this.note = '',
     this.scheduledFor,
     this.quote,
+    this.quoteRemaining,
     this.transfer,
     this.busy = false,
   });
@@ -101,6 +116,11 @@ class TransferFlowState {
   /// The server's priced draft, present from the review step onwards.
   final TransferQuote? quote;
 
+  /// Time left on the quote's price lock, ticked down once a second.
+  /// `null` whenever nothing is held — no quote yet, or a same-currency
+  /// quote, which has no rate that can move and so never expires.
+  final Duration? quoteRemaining;
+
   /// The settled transfer, present only on the receipt.
   final Transfer? transfer;
 
@@ -109,6 +129,14 @@ class TransferFlowState {
 
   bool get canQuote =>
       sourceAccountId != null && destination != null && amount.isValid;
+
+  /// The held price has run out. Distinct from `quoteRemaining == null`,
+  /// which means there was never a lock to begin with — an unlocked quote
+  /// is perfectly confirmable, an expired one is not.
+  bool get quoteExpired => quote != null && quoteRemaining == Duration.zero;
+
+  /// Whether a countdown should be on screen at all.
+  bool get quoteIsLocked => quoteRemaining != null;
 
   TransferFlowState copyWith({
     TransferStep? step,
@@ -122,6 +150,8 @@ class TransferFlowState {
     bool clearScheduledFor = false,
     TransferQuote? quote,
     bool clearQuote = false,
+    Duration? quoteRemaining,
+    bool clearQuoteRemaining = false,
     Transfer? transfer,
     bool? busy,
   }) {
@@ -136,6 +166,12 @@ class TransferFlowState {
       scheduledFor:
           clearScheduledFor ? null : (scheduledFor ?? this.scheduledFor),
       quote: clearQuote ? null : (quote ?? this.quote),
+      // The countdown belongs to the quote, so it is never carried past
+      // one: dropping the quote without dropping its remaining time would
+      // leave a countdown ticking against a price that no longer exists.
+      quoteRemaining: clearQuote || clearQuoteRemaining
+          ? null
+          : (quoteRemaining ?? this.quoteRemaining),
       transfer: transfer ?? this.transfer,
       busy: busy ?? this.busy,
     );
@@ -153,11 +189,16 @@ class TransferFlowState {
 @riverpod
 class TransferFlow extends _$TransferFlow {
   var _disposed = false;
+  Timer? _lockTimer;
 
   @override
   TransferFlowState build() {
     _disposed = false;
-    ref.onDispose(() => _disposed = true);
+    ref.onDispose(() {
+      _disposed = true;
+      _lockTimer?.cancel();
+      _lockTimer = null;
+    });
     return const TransferFlowState();
   }
 
@@ -250,11 +291,18 @@ class TransferFlow extends _$TransferFlow {
 
     return result.fold<Failure?>(
       onSuccess: (quote) {
+        final remaining = quote.remainingAt(_now());
         state = state.copyWith(
           busy: false,
           quote: quote,
+          quoteRemaining: remaining,
+          // An unlocked replacement has to actively clear the old
+          // countdown: `??` would inherit the dead quote's `Duration.zero`
+          // and the new price would render as expired on arrival.
+          clearQuoteRemaining: remaining == null,
           step: TransferStep.review,
         );
+        _startLockTimer(quote);
         return null;
       },
       onFailure: (failure) {
@@ -272,7 +320,7 @@ class TransferFlow extends _$TransferFlow {
   /// timeout — settles onto the same transfer rather than sending twice.
   Future<Failure?> confirm() async {
     final quote = state.quote;
-    if (quote == null || state.busy) return null;
+    if (quote == null || state.busy || state.quoteExpired) return null;
 
     state = state.copyWith(busy: true);
     final result = await ConfirmTransfer(_repository).call(
@@ -285,6 +333,7 @@ class TransferFlow extends _$TransferFlow {
 
     return result.fold<Failure?>(
       onSuccess: (transfer) {
+        _lockTimer?.cancel();
         state = state.copyWith(
           busy: false,
           transfer: transfer,
@@ -300,7 +349,59 @@ class TransferFlow extends _$TransferFlow {
     );
   }
 
-  void reset() => state = const TransferFlowState();
+  void reset() {
+    _lockTimer?.cancel();
+    _lockTimer = null;
+    // The deferred caller in `TransferFlowScreen` fires after the screen has
+    // gone, and this provider is auto-dispose — so by then the notifier may
+    // already be torn down. Cancelling the ticker is always safe; writing
+    // state to a disposed notifier throws.
+    if (_disposed) return;
+    state = const TransferFlowState();
+  }
+
+  /// Re-prices the same recipient and amount, staying on review.
+  ///
+  /// A re-quote is a genuinely new draft — new id, new idempotency key,
+  /// new lock — and not a refresh of the old one. That is the point: the
+  /// expired key must never be confirmable again, and reusing it would
+  /// hand the user the old price under a new countdown.
+  Future<Failure?> refreshQuote() => requestQuote();
+
+  /// Recomputes the time left on the lock.
+  ///
+  /// Public because the periodic timer is production's only caller and a
+  /// test's is the test itself — driving a countdown through real
+  /// `Timer`s would mean sleeping through it.
+  @visibleForTesting
+  void tick() {
+    final quote = state.quote;
+    if (quote == null || !quote.isLocked) return;
+    final remaining = quote.remainingAt(_now());
+    if (remaining == state.quoteRemaining) return;
+    state = state.copyWith(quoteRemaining: remaining);
+    if (remaining == Duration.zero) {
+      _lockTimer?.cancel();
+      _lockTimer = null;
+    }
+  }
+
+  /// Ticks the countdown once a second while a price is held. Unlocked
+  /// quotes get no timer at all rather than a timer that never fires.
+  void _startLockTimer(TransferQuote quote) {
+    _lockTimer?.cancel();
+    _lockTimer = null;
+    if (!quote.isLocked) return;
+    _lockTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        if (_disposed) return;
+        tick();
+      },
+    );
+  }
+
+  DateTime Function() get _now => ref.read(transferClockProvider);
 
   /// Money moved, so every cached balance and feed is stale. Invalidating
   /// rather than patching keeps the server the single source of truth —

@@ -725,6 +725,8 @@ mixin _$TransferQuoteDto {
   String get destinationCurrency;
   String? get rate;
   String? get scheduledFor;
+  String? get expiresAt;
+  int? get expiresInSeconds;
 
   /// Create a copy of TransferQuoteDto
   /// with the given fields replaced by the non-null parameter values.
@@ -765,7 +767,11 @@ mixin _$TransferQuoteDto {
                 other.destinationCurrency == destinationCurrency) &&
             (identical(other.rate, rate) || other.rate == rate) &&
             (identical(other.scheduledFor, scheduledFor) ||
-                other.scheduledFor == scheduledFor));
+                other.scheduledFor == scheduledFor) &&
+            (identical(other.expiresAt, expiresAt) ||
+                other.expiresAt == expiresAt) &&
+            (identical(other.expiresInSeconds, expiresInSeconds) ||
+                other.expiresInSeconds == expiresInSeconds));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -784,11 +790,13 @@ mixin _$TransferQuoteDto {
       destinationAmountMinor,
       destinationCurrency,
       rate,
-      scheduledFor);
+      scheduledFor,
+      expiresAt,
+      expiresInSeconds);
 
   @override
   String toString() {
-    return 'TransferQuoteDto(id: $id, idempotencyKey: $idempotencyKey, sourceAccountId: $sourceAccountId, destinationLabel: $destinationLabel, destinationDetail: $destinationDetail, amountMinor: $amountMinor, currency: $currency, feeMinor: $feeMinor, totalDebitMinor: $totalDebitMinor, destinationAmountMinor: $destinationAmountMinor, destinationCurrency: $destinationCurrency, rate: $rate, scheduledFor: $scheduledFor)';
+    return 'TransferQuoteDto(id: $id, idempotencyKey: $idempotencyKey, sourceAccountId: $sourceAccountId, destinationLabel: $destinationLabel, destinationDetail: $destinationDetail, amountMinor: $amountMinor, currency: $currency, feeMinor: $feeMinor, totalDebitMinor: $totalDebitMinor, destinationAmountMinor: $destinationAmountMinor, destinationCurrency: $destinationCurrency, rate: $rate, scheduledFor: $scheduledFor, expiresAt: $expiresAt, expiresInSeconds: $expiresInSeconds)';
   }
 }
 
@@ -811,7 +819,9 @@ abstract mixin class $TransferQuoteDtoCopyWith<$Res> {
       int destinationAmountMinor,
       String destinationCurrency,
       String? rate,
-      String? scheduledFor});
+      String? scheduledFor,
+      String? expiresAt,
+      int? expiresInSeconds});
 }
 
 /// @nodoc
@@ -840,6 +850,8 @@ class _$TransferQuoteDtoCopyWithImpl<$Res>
     Object? destinationCurrency = null,
     Object? rate = freezed,
     Object? scheduledFor = freezed,
+    Object? expiresAt = freezed,
+    Object? expiresInSeconds = freezed,
   }) {
     return _then(_self.copyWith(
       id: null == id
@@ -894,6 +906,14 @@ class _$TransferQuoteDtoCopyWithImpl<$Res>
           ? _self.scheduledFor
           : scheduledFor // ignore: cast_nullable_to_non_nullable
               as String?,
+      expiresAt: freezed == expiresAt
+          ? _self.expiresAt
+          : expiresAt // ignore: cast_nullable_to_non_nullable
+              as String?,
+      expiresInSeconds: freezed == expiresInSeconds
+          ? _self.expiresInSeconds
+          : expiresInSeconds // ignore: cast_nullable_to_non_nullable
+              as int?,
     ));
   }
 }
@@ -1004,7 +1024,9 @@ extension TransferQuoteDtoPatterns on TransferQuoteDto {
             int destinationAmountMinor,
             String destinationCurrency,
             String? rate,
-            String? scheduledFor)?
+            String? scheduledFor,
+            String? expiresAt,
+            int? expiresInSeconds)?
         $default, {
     required TResult orElse(),
   }) {
@@ -1024,7 +1046,9 @@ extension TransferQuoteDtoPatterns on TransferQuoteDto {
             _that.destinationAmountMinor,
             _that.destinationCurrency,
             _that.rate,
-            _that.scheduledFor);
+            _that.scheduledFor,
+            _that.expiresAt,
+            _that.expiresInSeconds);
       case _:
         return orElse();
     }
@@ -1058,7 +1082,9 @@ extension TransferQuoteDtoPatterns on TransferQuoteDto {
             int destinationAmountMinor,
             String destinationCurrency,
             String? rate,
-            String? scheduledFor)
+            String? scheduledFor,
+            String? expiresAt,
+            int? expiresInSeconds)
         $default,
   ) {
     final _that = this;
@@ -1077,7 +1103,9 @@ extension TransferQuoteDtoPatterns on TransferQuoteDto {
             _that.destinationAmountMinor,
             _that.destinationCurrency,
             _that.rate,
-            _that.scheduledFor);
+            _that.scheduledFor,
+            _that.expiresAt,
+            _that.expiresInSeconds);
       case _:
         throw StateError('Unexpected subclass');
     }
@@ -1110,7 +1138,9 @@ extension TransferQuoteDtoPatterns on TransferQuoteDto {
             int destinationAmountMinor,
             String destinationCurrency,
             String? rate,
-            String? scheduledFor)?
+            String? scheduledFor,
+            String? expiresAt,
+            int? expiresInSeconds)?
         $default,
   ) {
     final _that = this;
@@ -1129,7 +1159,9 @@ extension TransferQuoteDtoPatterns on TransferQuoteDto {
             _that.destinationAmountMinor,
             _that.destinationCurrency,
             _that.rate,
-            _that.scheduledFor);
+            _that.scheduledFor,
+            _that.expiresAt,
+            _that.expiresInSeconds);
       case _:
         return null;
     }
@@ -1152,7 +1184,9 @@ class _TransferQuoteDto extends TransferQuoteDto {
       required this.destinationAmountMinor,
       required this.destinationCurrency,
       this.rate,
-      this.scheduledFor})
+      this.scheduledFor,
+      this.expiresAt,
+      this.expiresInSeconds})
       : super._();
   factory _TransferQuoteDto.fromJson(Map<String, dynamic> json) =>
       _$TransferQuoteDtoFromJson(json);
@@ -1183,6 +1217,10 @@ class _TransferQuoteDto extends TransferQuoteDto {
   final String? rate;
   @override
   final String? scheduledFor;
+  @override
+  final String? expiresAt;
+  @override
+  final int? expiresInSeconds;
 
   /// Create a copy of TransferQuoteDto
   /// with the given fields replaced by the non-null parameter values.
@@ -1227,7 +1265,11 @@ class _TransferQuoteDto extends TransferQuoteDto {
                 other.destinationCurrency == destinationCurrency) &&
             (identical(other.rate, rate) || other.rate == rate) &&
             (identical(other.scheduledFor, scheduledFor) ||
-                other.scheduledFor == scheduledFor));
+                other.scheduledFor == scheduledFor) &&
+            (identical(other.expiresAt, expiresAt) ||
+                other.expiresAt == expiresAt) &&
+            (identical(other.expiresInSeconds, expiresInSeconds) ||
+                other.expiresInSeconds == expiresInSeconds));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1246,11 +1288,13 @@ class _TransferQuoteDto extends TransferQuoteDto {
       destinationAmountMinor,
       destinationCurrency,
       rate,
-      scheduledFor);
+      scheduledFor,
+      expiresAt,
+      expiresInSeconds);
 
   @override
   String toString() {
-    return 'TransferQuoteDto(id: $id, idempotencyKey: $idempotencyKey, sourceAccountId: $sourceAccountId, destinationLabel: $destinationLabel, destinationDetail: $destinationDetail, amountMinor: $amountMinor, currency: $currency, feeMinor: $feeMinor, totalDebitMinor: $totalDebitMinor, destinationAmountMinor: $destinationAmountMinor, destinationCurrency: $destinationCurrency, rate: $rate, scheduledFor: $scheduledFor)';
+    return 'TransferQuoteDto(id: $id, idempotencyKey: $idempotencyKey, sourceAccountId: $sourceAccountId, destinationLabel: $destinationLabel, destinationDetail: $destinationDetail, amountMinor: $amountMinor, currency: $currency, feeMinor: $feeMinor, totalDebitMinor: $totalDebitMinor, destinationAmountMinor: $destinationAmountMinor, destinationCurrency: $destinationCurrency, rate: $rate, scheduledFor: $scheduledFor, expiresAt: $expiresAt, expiresInSeconds: $expiresInSeconds)';
   }
 }
 
@@ -1275,7 +1319,9 @@ abstract mixin class _$TransferQuoteDtoCopyWith<$Res>
       int destinationAmountMinor,
       String destinationCurrency,
       String? rate,
-      String? scheduledFor});
+      String? scheduledFor,
+      String? expiresAt,
+      int? expiresInSeconds});
 }
 
 /// @nodoc
@@ -1304,6 +1350,8 @@ class __$TransferQuoteDtoCopyWithImpl<$Res>
     Object? destinationCurrency = null,
     Object? rate = freezed,
     Object? scheduledFor = freezed,
+    Object? expiresAt = freezed,
+    Object? expiresInSeconds = freezed,
   }) {
     return _then(_TransferQuoteDto(
       id: null == id
@@ -1358,6 +1406,14 @@ class __$TransferQuoteDtoCopyWithImpl<$Res>
           ? _self.scheduledFor
           : scheduledFor // ignore: cast_nullable_to_non_nullable
               as String?,
+      expiresAt: freezed == expiresAt
+          ? _self.expiresAt
+          : expiresAt // ignore: cast_nullable_to_non_nullable
+              as String?,
+      expiresInSeconds: freezed == expiresInSeconds
+          ? _self.expiresInSeconds
+          : expiresInSeconds // ignore: cast_nullable_to_non_nullable
+              as int?,
     ));
   }
 }

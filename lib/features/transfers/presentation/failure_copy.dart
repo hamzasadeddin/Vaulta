@@ -8,10 +8,18 @@ import 'package:vaulta/core/error/failure.dart';
 /// **field keys** on a [ValidationFailure], never from the server's
 /// message string: `Failure.message` is developer-facing (see
 /// `core/error/failure.dart`), and rendering backend prose would put
-/// untranslated, unreviewed text in front of the user.
+/// untranslated, unreviewed text in front of the user. Phase 9 extends
+/// the same rule to `ServerFailure`, switching on the structured
+/// `errorCode` rather than the message it arrived with.
 String transfersFailureCopy(Object failure) {
   return switch (failure) {
     ValidationFailure(:final fieldErrors) => _validationCopy(fieldErrors),
+    // Matched before the general ServerFailure arm below. An expired
+    // quote is the one 409 the user can act on, and it needs to say the
+    // money is still theirs before it says anything else.
+    ServerFailure(errorCode: 'QUOTE_EXPIRED') =>
+      'That rate expired before the transfer went through. Nothing has '
+          'left your account \u2014 get a new price to continue.',
     NetworkFailure() => 'Can\u2019t reach Vaulta. Your money hasn\u2019t '
         'moved \u2014 check your connection and try again.',
     TimeoutFailure() => 'The connection timed out. Check your activity '
