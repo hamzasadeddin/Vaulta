@@ -1,4 +1,5 @@
 import 'package:vaulta/core/error/failure.dart';
+import 'package:vaulta/features/transfers/domain/entities/outbox_entry.dart';
 
 /// One place for user-facing failure copy in the transfers feature.
 /// English-only until the l10n pass in Phase 10.
@@ -28,6 +29,34 @@ String transfersFailureCopy(Object failure) {
     ServerFailure() => 'Something went wrong on our side. No money has '
         'left your account.',
     _ => 'Something unexpected went wrong.',
+  };
+}
+
+/// Why a queued transfer stopped, and what the user can do about it.
+///
+/// Every line leads with the money, because that is the only question
+/// the user actually has. Handoff 8 §10 is explicit that neither silent
+/// retry nor silent discard is acceptable here: the queue may not send
+/// at a price the user never saw, and it may not drop an instruction
+/// while they believe the money moved. So each arm names the state and
+/// offers a decision.
+String outboxAttentionCopy(OutboxAttention attention) {
+  return switch (attention) {
+    OutboxAttention.rateExpired =>
+      'The exchange rate expired while you were offline. Nothing left '
+          'your account \u2014 get a new price to send it now.',
+    // Reached only after the idempotency key came back unmatched, which
+    // is the server saying this confirm never settled. Saying "we lost
+    // it" would be worse than useless; saying nothing moved is true.
+    OutboxAttention.draftGone =>
+      'This transfer is no longer held by the bank and nothing left '
+          'your account. Get a new price to send it again.',
+    OutboxAttention.rejected =>
+      'The bank turned this transfer down \u2014 check the amount and '
+          'your available balance, then get a new price.',
+    OutboxAttention.exhausted =>
+      'We couldn\u2019t reach the bank to send this. Nothing has left '
+          'your account. Try again, or discard it.',
   };
 }
 

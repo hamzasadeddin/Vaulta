@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:vaulta/core/connectivity/connectivity_monitor.dart';
 import 'package:vaulta/core/error/failure.dart';
 import 'package:vaulta/core/iban/iban.dart';
 import 'package:vaulta/core/money/currency.dart';
@@ -11,10 +12,14 @@ import 'package:vaulta/core/result/result.dart';
 import 'package:vaulta/features/accounts/domain/entities/account.dart';
 import 'package:vaulta/features/accounts/domain/repositories/accounts_repository.dart';
 import 'package:vaulta/features/accounts/presentation/providers/accounts_providers.dart';
+import 'package:vaulta/features/auth/presentation/providers/auth_providers.dart';
 import 'package:vaulta/features/transfers/domain/entities/beneficiary.dart';
 import 'package:vaulta/features/transfers/domain/entities/transfer.dart';
 import 'package:vaulta/features/transfers/domain/repositories/transfers_repository.dart';
+import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
 import 'package:vaulta/features/transfers/presentation/providers/transfers_providers.dart';
+
+import 'support/fake_outbox.dart';
 
 class _MockTransfers extends Mock implements TransfersRepository {}
 
@@ -88,11 +93,25 @@ void main() {
         .thenAnswer((_) async => const Result.success(<Beneficiary>[]));
   });
 
+  late FakeOutboxRepository outbox;
+
   ProviderContainer makeContainer() {
+    outbox = FakeOutboxRepository();
     final container = ProviderContainer(
       overrides: [
         transfersRepositoryProvider.overrideWithValue(transfers),
         accountsRepositoryProvider.overrideWithValue(accounts),
+        // Keep the real Drift database and the connectivity platform
+        // channel out of unit tests — the flow only needs the queue to
+        // accept an entry, and building the real outbox would fire a
+        // path_provider channel with no binding.
+        outboxRepositoryProvider.overrideWithValue(outbox),
+        connectivityMonitorProvider
+            .overrideWithValue(const SilentConnectivityMonitor()),
+        // The outbox only drains inside a session; model one (see
+        // signedIn in fake_outbox.dart) so the drain gate doesn't build
+        // the real auth chain.
+        authControllerProvider.overrideWithValue(signedIn),
       ],
     );
     addTearDown(container.dispose);
@@ -329,7 +348,13 @@ void main() {
       ).called(1);
     });
 
-    test('a failed confirm keeps the quote so the user can retry', () async {
+    test('a transport failure queues the transfer and shows the notice',
+        () async {
+      // 9b changed this contract. Before, a timeout kept the user on
+      // review to retry by hand. Now the confirm is durable: a transport
+      // failure is saved to the outbox and the flow moves to its terminal
+      // "saved to send" surface. The receipt stays reserved for a real
+      // server answer — nothing here claims the money moved.
       when(
         () => transfers.confirmTransfer(
           transferId: any(named: 'transferId'),
@@ -341,13 +366,68 @@ void main() {
       final failure =
           await container.read(transferFlowProvider.notifier).confirm();
 
-      expect(failure, isA<TimeoutFailure>());
+      expect(failure, isNull, reason: 'queued, so no error surfaces');
+      final state = container.read(transferFlowProvider);
+      expect(state.step, TransferStep.queued);
+      expect(state.transfer, isNull);
+      expect(outbox.enqueueCalls, 1);
+      // The queued entry replays the exact key — a later drain cannot
+      // become a second transfer.
+      expect(outbox.entries.single.idempotencyKey, 'idem_trf_1');
+      expect(state.busy, isFalse);
+    });
+
+    test('a rejected transfer stays on review instead of queuing', () async {
+      // The other side of the split: a validation failure is the bank
+      // refusing the transfer, not the network dropping it. Queuing it
+      // would just walk into the same refusal later, so the flow keeps
+      // the user on review with the error — unchanged from Phase 8.
+      when(
+        () => transfers.confirmTransfer(
+          transferId: any(named: 'transferId'),
+          idempotencyKey: any(named: 'idempotencyKey'),
+        ),
+      ).thenAnswer(
+        (_) async => const Result.failure(
+          ValidationFailure(
+            fieldErrors: {
+              'amountMinor': ['Not enough available balance'],
+            },
+          ),
+        ),
+      );
+
+      final container = await quoted();
+      final failure =
+          await container.read(transferFlowProvider.notifier).confirm();
+
+      expect(failure, isA<ValidationFailure>());
       final state = container.read(transferFlowProvider);
       expect(state.step, TransferStep.review);
-      expect(state.transfer, isNull);
-      // Same quote, same key — a retry cannot become a second transfer.
       expect(state.quote?.idempotencyKey, 'idem_trf_1');
+      expect(outbox.enqueueCalls, 0);
       expect(state.busy, isFalse);
+    });
+
+    test('a transport failure that cannot be queued reports the failure',
+        () async {
+      // If the outbox write itself fails, the flow must not pretend the
+      // transfer is safely saved. It surfaces the original network
+      // failure and stays on review.
+      when(
+        () => transfers.confirmTransfer(
+          transferId: any(named: 'transferId'),
+          idempotencyKey: any(named: 'idempotencyKey'),
+        ),
+      ).thenAnswer((_) async => const Result.failure(NetworkFailure()));
+
+      final container = await quoted();
+      outbox.failEnqueue = true;
+      final failure =
+          await container.read(transferFlowProvider.notifier).confirm();
+
+      expect(failure, isA<NetworkFailure>());
+      expect(container.read(transferFlowProvider).step, TransferStep.review);
     });
 
     test('confirming without a quote does nothing', () async {

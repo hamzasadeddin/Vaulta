@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:vaulta/core/connectivity/connectivity_monitor.dart';
 import 'package:vaulta/core/error/failure.dart';
 import 'package:vaulta/core/money/currency.dart';
 import 'package:vaulta/core/money/money.dart';
@@ -16,6 +17,9 @@ import 'package:vaulta/features/dashboard/domain/entities/recent_transaction.dar
 import 'package:vaulta/features/dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:vaulta/features/dashboard/presentation/providers/dashboard_providers.dart';
 import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
+import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
+
+import '../transfers/support/fake_outbox.dart';
 
 class _MockDashboardRepository extends Mock implements DashboardRepository {}
 
@@ -85,6 +89,13 @@ void main() {
       overrides: [
         dashboardRepositoryProvider.overrideWithValue(dashboard),
         authRepositoryProvider.overrideWithValue(auth),
+        // The dashboard now hosts the outbox banner, which builds the
+        // outbox controller. Override its storage so the widget test
+        // doesn't open the real Drift database (which warns about a
+        // second open and fires a platform channel with no binding).
+        outboxRepositoryProvider.overrideWithValue(FakeOutboxRepository()),
+        connectivityMonitorProvider
+            .overrideWithValue(const SilentConnectivityMonitor()),
       ],
       child: MaterialApp(
         theme: AppTheme.dark(),

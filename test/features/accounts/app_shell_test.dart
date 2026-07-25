@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:vaulta/app/shell/app_shell.dart';
+import 'package:vaulta/core/connectivity/connectivity_monitor.dart';
 import 'package:vaulta/core/money/currency.dart';
 import 'package:vaulta/core/money/money.dart';
 import 'package:vaulta/core/result/result.dart';
@@ -15,6 +16,9 @@ import 'package:vaulta/features/accounts/presentation/accounts_paths.dart';
 import 'package:vaulta/features/accounts/presentation/providers/accounts_providers.dart';
 import 'package:vaulta/features/accounts/presentation/screens/account_detail_screen.dart';
 import 'package:vaulta/features/accounts/presentation/screens/accounts_screen.dart';
+import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
+
+import '../transfers/support/fake_outbox.dart';
 
 class _MockAccountsRepository extends Mock implements AccountsRepository {}
 
@@ -101,7 +105,14 @@ void main() {
       ],
     );
     return ProviderScope(
-      overrides: [accountsRepositoryProvider.overrideWithValue(repository)],
+      overrides: [
+        accountsRepositoryProvider.overrideWithValue(repository),
+        // The home branch renders the dashboard, whose outbox banner
+        // would open the real Drift database in this shell test.
+        outboxRepositoryProvider.overrideWithValue(FakeOutboxRepository()),
+        connectivityMonitorProvider
+            .overrideWithValue(const SilentConnectivityMonitor()),
+      ],
       child: MaterialApp.router(theme: AppTheme.dark(), routerConfig: router),
     );
   }

@@ -10,6 +10,7 @@ environment:
 # commit pubspec.lock — the lock file is the pin. Bump with
 # `flutter pub upgrade --major-versions`.
 dependencies:
+  connectivity_plus: any
   decimal: any
   dio: any
   dio_smart_retry: any

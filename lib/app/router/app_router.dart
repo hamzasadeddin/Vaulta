@@ -18,6 +18,7 @@ import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.
 import 'package:vaulta/features/transactions/presentation/screens/transaction_detail_screen.dart';
 import 'package:vaulta/features/transactions/presentation/screens/transactions_screen.dart';
 import 'package:vaulta/features/transactions/presentation/transactions_paths.dart';
+import 'package:vaulta/features/transfers/domain/entities/transfer.dart';
 import 'package:vaulta/features/transfers/presentation/screens/transfer_flow_screen.dart';
 
 part 'app_router.g.dart';
@@ -117,7 +118,17 @@ GoRouter appRouter(Ref ref) {
                   // '/', so TransfersPaths.flow is unchanged.
                   GoRoute(
                     path: 'transfer',
-                    builder: (context, state) => const TransferFlowScreen(),
+                    builder: (context, state) {
+                      // Phase 9b: the outbox re-enters the flow with the
+                      // request it stored, so a refused queued transfer
+                      // can be re-priced. `extra` rather than a provider
+                      // because the flow controller is auto-dispose —
+                      // see TransferFlowScreen.resume.
+                      final extra = state.extra;
+                      return TransferFlowScreen(
+                        resume: extra is TransferRequest ? extra : null,
+                      );
+                    },
                   ),
                 ],
               ),

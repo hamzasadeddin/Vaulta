@@ -5,6 +5,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:talker_flutter/talker_flutter.dart';
 import 'package:vaulta/app/app.dart';
 import 'package:vaulta/core/config/app_config.dart';
+import 'package:vaulta/core/connectivity/connectivity_monitor.dart';
 import 'package:vaulta/core/logging/logging_providers.dart';
 import 'package:vaulta/core/network/mock/mock_api_interceptor.dart';
 import 'package:vaulta/core/network/network_providers.dart';
@@ -12,6 +13,9 @@ import 'package:vaulta/core/security/biometric_service.dart';
 import 'package:vaulta/features/auth/presentation/screens/login_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/otp_screen.dart';
 import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
+import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
+
+import '../transfers/support/fake_outbox.dart';
 
 class _MockBiometricService extends Mock implements BiometricService {}
 
@@ -44,6 +48,11 @@ void main() {
         ),
         biometricServiceProvider.overrideWithValue(biometrics),
         // In-memory token store (core default) — no platform channels.
+        // Same for the outbox: the dashboard's banner would otherwise
+        // open the real Drift database in this full-app widget test.
+        outboxRepositoryProvider.overrideWithValue(FakeOutboxRepository()),
+        connectivityMonitorProvider
+            .overrideWithValue(const SilentConnectivityMonitor()),
       ],
       child: const VaultaApp(),
     );

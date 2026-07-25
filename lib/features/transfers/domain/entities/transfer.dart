@@ -85,6 +85,29 @@ class TransferRequest {
 
   /// `null` sends immediately; a future date schedules it.
   final DateTime? scheduledFor;
+
+  /// Value equality earns its place in Phase 9b: a request is now
+  /// *persisted* in the outbox and read back, so "is the row I reloaded
+  /// the transfer the user authorised" has to be answerable. Before
+  /// that it was a one-shot input and identity was enough.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TransferRequest &&
+          other.sourceAccountId == sourceAccountId &&
+          other.destination == destination &&
+          other.amount == amount &&
+          other.note == note &&
+          other.scheduledFor == scheduledFor;
+
+  @override
+  int get hashCode => Object.hash(
+        sourceAccountId,
+        destination,
+        amount,
+        note,
+        scheduledFor,
+      );
 }
 
 /// The server's priced, reviewable draft. Nothing has moved yet.

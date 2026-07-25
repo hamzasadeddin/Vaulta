@@ -6,6 +6,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:vaulta/core/error/failure.dart';
 import 'package:vaulta/core/money/money.dart';
 import 'package:vaulta/core/network/network_providers.dart';
+import 'package:vaulta/core/result/result.dart';
 import 'package:vaulta/core/usecase/use_case.dart';
 // Presentation-only reads into sibling features (§6.22): the flow needs
 // the source account's currency to parse an amount, and a settled
@@ -21,6 +22,7 @@ import 'package:vaulta/features/transfers/domain/entities/transfer.dart';
 import 'package:vaulta/features/transfers/domain/repositories/transfers_repository.dart';
 import 'package:vaulta/features/transfers/domain/usecases/transfers_usecases.dart';
 import 'package:vaulta/features/transfers/presentation/forms/transfer_inputs.dart';
+import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
 
 part 'transfers_providers.g.dart';
 
@@ -32,6 +34,10 @@ part 'transfers_providers.g.dart';
 /// Hand-written rather than `@riverpod`: it holds no state and needs no
 /// disposal, and `overrideWithValue` on a plain `Provider` is the same
 /// shape `core/network` already uses for its own seams.
+///
+/// Phase 9b widened its remit: the outbox's backoff, its due-check and
+/// its wake timer all read the same clock, so overriding this one
+/// provider makes the whole queue deterministic in tests.
 final transferClockProvider = Provider<DateTime Function()>(
   (ref) => DateTime.now,
 );
@@ -80,8 +86,14 @@ class BeneficiariesController extends _$BeneficiariesController {
   }
 }
 
-/// The four surfaces of the send-money flow.
-enum TransferStep { recipient, amount, review, receipt }
+/// The five surfaces of the send-money flow.
+///
+/// [queued] is Phase 9b's addition and it is a *terminal* surface, not an
+/// error state: the user authorised the transfer, the bank was
+/// unreachable, and the instruction is now durable. It sits beside
+/// [receipt] rather than replacing it because the two say different
+/// things — one is "this happened", the other is "this will".
+enum TransferStep { recipient, amount, review, receipt, queued }
 
 /// Everything the flow needs to render, in one immutable value.
 @immutable
@@ -96,6 +108,7 @@ class TransferFlowState {
     this.note = '',
     this.scheduledFor,
     this.quote,
+    this.request,
     this.quoteRemaining,
     this.transfer,
     this.busy = false,
@@ -115,6 +128,13 @@ class TransferFlowState {
 
   /// The server's priced draft, present from the review step onwards.
   final TransferQuote? quote;
+
+  /// The request that produced [quote], kept in step with it.
+  ///
+  /// Needed because a queued confirm may later have to be *re-priced*,
+  /// and a re-quote is a new draft rather than a refreshed one (§38) —
+  /// so what has to survive is the original request, not the dead quote.
+  final TransferRequest? request;
 
   /// Time left on the quote's price lock, ticked down once a second.
   /// `null` whenever nothing is held — no quote yet, or a same-currency
@@ -150,6 +170,7 @@ class TransferFlowState {
     bool clearScheduledFor = false,
     TransferQuote? quote,
     bool clearQuote = false,
+    TransferRequest? request,
     Duration? quoteRemaining,
     bool clearQuoteRemaining = false,
     Transfer? transfer,
@@ -166,6 +187,10 @@ class TransferFlowState {
       scheduledFor:
           clearScheduledFor ? null : (scheduledFor ?? this.scheduledFor),
       quote: clearQuote ? null : (quote ?? this.quote),
+      // The request is the quote's twin — it is what produced it and
+      // what would re-produce it. Carrying one without the other would
+      // let a re-price run against details the user has since edited.
+      request: clearQuote ? null : (request ?? this.request),
       // The countdown belongs to the quote, so it is never carried past
       // one: dropping the quote without dropping its remaining time would
       // leave a countdown ticking against a price that no longer exists.
@@ -183,6 +208,11 @@ class TransferFlowState {
 /// The confirm is **pessimistic**, unlike Phase 7's optimistic freeze: a
 /// transfer is only shown as done once the server says it is. Nothing
 /// about a money movement may be guessed at and rolled back.
+///
+/// Phase 9b adds one exception, and it is not a softening of that rule:
+/// when the *transport* fails the flow still never claims the money
+/// moved — it says the instruction is saved and will be delivered. The
+/// receipt remains reserved for a server answer.
 ///
 /// Every edit upstream of the review step clears the quote, so a stale
 /// price can never be the thing the user confirms.
@@ -238,11 +268,15 @@ class TransferFlow extends _$TransferFlow {
 
   void goTo(TransferStep step) => state = state.copyWith(step: step);
 
-  /// Steps back one surface. The receipt is terminal — there is nothing
-  /// to go back to once money has moved.
+  /// Steps back one surface. The receipt and the queued notice are both
+  /// terminal — there is nothing to go back to once the instruction has
+  /// been either executed or durably accepted.
   void back() {
     final previous = switch (state.step) {
-      TransferStep.recipient || TransferStep.receipt => null,
+      TransferStep.recipient ||
+      TransferStep.receipt ||
+      TransferStep.queued =>
+        null,
       TransferStep.amount => TransferStep.recipient,
       TransferStep.review => TransferStep.amount,
     };
@@ -277,8 +311,7 @@ class TransferFlow extends _$TransferFlow {
       return null;
     }
 
-    state = state.copyWith(busy: true);
-    final result = await CreateTransfer(_repository).call(
+    return _quoteFor(
       TransferRequest(
         sourceAccountId: accountId,
         destination: destination,
@@ -287,39 +320,39 @@ class TransferFlow extends _$TransferFlow {
         scheduledFor: state.scheduledFor,
       ),
     );
-    if (_disposed) return null;
+  }
 
-    return result.fold<Failure?>(
-      onSuccess: (quote) {
-        final remaining = quote.remainingAt(_now());
-        state = state.copyWith(
-          busy: false,
-          quote: quote,
-          quoteRemaining: remaining,
-          // An unlocked replacement has to actively clear the old
-          // countdown: `??` would inherit the dead quote's `Duration.zero`
-          // and the new price would render as expired on arrival.
-          clearQuoteRemaining: remaining == null,
-          step: TransferStep.review,
-        );
-        _startLockTimer(quote);
-        return null;
-      },
-      onFailure: (failure) {
-        state = state.copyWith(busy: false);
-        return failure;
-      },
+  /// Re-opens the flow on the review step for a transfer that was queued
+  /// and then refused — the "get a new price" arm of §10's policy.
+  ///
+  /// Seeds directly from the stored [TransferRequest] rather than
+  /// replaying the UI's inputs, because the account list may not be
+  /// loaded when the user acts on the queue and the request already
+  /// carries an exact [Money]. The caller discards the outbox entry: the
+  /// dead draft must never be confirmable again (§38), and nothing has
+  /// moved, so there is nothing to reconcile.
+  Future<Failure?> resumeFrom(TransferRequest request) {
+    state = TransferFlowState(
+      step: TransferStep.review,
+      sourceAccountId: request.sourceAccountId,
+      destination: request.destination,
+      amount: AmountInput.dirty(request.amount.amount.toString()),
+      note: request.note ?? '',
+      scheduledFor: request.scheduledFor,
     );
+    return _quoteFor(request);
   }
 
   /// Executes the quoted transfer. Pessimistic: the receipt appears only
   /// after the server confirms.
   ///
   /// The quote's idempotency key is replayed verbatim, so a retry — from
-  /// the retry interceptor or from the user tapping again after a
-  /// timeout — settles onto the same transfer rather than sending twice.
+  /// the retry interceptor, from the user tapping again after a timeout,
+  /// or from the outbox days later — settles onto the same transfer
+  /// rather than sending twice.
   Future<Failure?> confirm() async {
     final quote = state.quote;
+    final request = state.request;
     if (quote == null || state.busy || state.quoteExpired) return null;
 
     state = state.copyWith(busy: true);
@@ -331,22 +364,20 @@ class TransferFlow extends _$TransferFlow {
     );
     if (_disposed) return null;
 
-    return result.fold<Failure?>(
-      onSuccess: (transfer) {
+    switch (result) {
+      case Success<Transfer, Failure>(:final value):
         _lockTimer?.cancel();
+        _lockTimer = null;
         state = state.copyWith(
           busy: false,
-          transfer: transfer,
+          transfer: value,
           step: TransferStep.receipt,
         );
         _invalidateBalances();
         return null;
-      },
-      onFailure: (failure) {
-        state = state.copyWith(busy: false);
-        return failure;
-      },
-    );
+      case Failed<Transfer, Failure>(:final failure):
+        return _afterFailedConfirm(failure, quote: quote, request: request);
+    }
   }
 
   void reset() {
@@ -384,6 +415,74 @@ class TransferFlow extends _$TransferFlow {
       _lockTimer?.cancel();
       _lockTimer = null;
     }
+  }
+
+  /// Decides what a failed confirm means for the flow.
+  ///
+  /// Only a *transport* failure is queueable. Everything else is an
+  /// answer from the bank: a 422 will be refused identically in an hour,
+  /// a 409 means the price is already dead, and a 401 means the session
+  /// is. Queueing those would convert a clear, actionable error into a
+  /// delayed one — the opposite of what an outbox is for.
+  Future<Failure?> _afterFailedConfirm(
+    Failure failure, {
+    required TransferQuote quote,
+    required TransferRequest? request,
+  }) async {
+    final queueable = failure is NetworkFailure || failure is TimeoutFailure;
+    if (!queueable || request == null) {
+      state = state.copyWith(busy: false);
+      return failure;
+    }
+
+    final queued = await ref
+        .read(outboxControllerProvider.notifier)
+        .enqueue(quote: quote, request: request);
+    if (_disposed) return null;
+
+    if (!queued) {
+      // The queue itself could not be written. Report the original
+      // network failure rather than a reassurance nothing can back.
+      state = state.copyWith(busy: false);
+      return failure;
+    }
+
+    _lockTimer?.cancel();
+    _lockTimer = null;
+    // Balances are deliberately *not* invalidated: nothing has moved,
+    // and refreshing them here would imply otherwise.
+    state = state.copyWith(busy: false, step: TransferStep.queued);
+    return null;
+  }
+
+  Future<Failure?> _quoteFor(TransferRequest request) async {
+    if (state.busy) return null;
+    state = state.copyWith(busy: true);
+    final result = await CreateTransfer(_repository).call(request);
+    if (_disposed) return null;
+
+    return result.fold<Failure?>(
+      onSuccess: (quote) {
+        final remaining = quote.remainingAt(_now());
+        state = state.copyWith(
+          busy: false,
+          quote: quote,
+          request: request,
+          quoteRemaining: remaining,
+          // An unlocked replacement has to actively clear the old
+          // countdown: `??` would inherit the dead quote's `Duration.zero`
+          // and the new price would render as expired on arrival.
+          clearQuoteRemaining: remaining == null,
+          step: TransferStep.review,
+        );
+        _startLockTimer(quote);
+        return null;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(busy: false);
+        return failure;
+      },
+    );
   }
 
   /// Ticks the countdown once a second while a price is held. Unlocked

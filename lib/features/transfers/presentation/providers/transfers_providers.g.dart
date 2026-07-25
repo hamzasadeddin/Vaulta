@@ -126,6 +126,11 @@ abstract class _$BeneficiariesController
 /// transfer is only shown as done once the server says it is. Nothing
 /// about a money movement may be guessed at and rolled back.
 ///
+/// Phase 9b adds one exception, and it is not a softening of that rule:
+/// when the *transport* fails the flow still never claims the money
+/// moved — it says the instruction is saved and will be delivered. The
+/// receipt remains reserved for a server answer.
+///
 /// Every edit upstream of the review step clears the quote, so a stale
 /// price can never be the thing the user confirms.
 
@@ -138,6 +143,11 @@ final transferFlowProvider = TransferFlowProvider._();
 /// transfer is only shown as done once the server says it is. Nothing
 /// about a money movement may be guessed at and rolled back.
 ///
+/// Phase 9b adds one exception, and it is not a softening of that rule:
+/// when the *transport* fails the flow still never claims the money
+/// moved — it says the instruction is saved and will be delivered. The
+/// receipt remains reserved for a server answer.
+///
 /// Every edit upstream of the review step clears the quote, so a stale
 /// price can never be the thing the user confirms.
 final class TransferFlowProvider
@@ -147,6 +157,11 @@ final class TransferFlowProvider
   /// The confirm is **pessimistic**, unlike Phase 7's optimistic freeze: a
   /// transfer is only shown as done once the server says it is. Nothing
   /// about a money movement may be guessed at and rolled back.
+  ///
+  /// Phase 9b adds one exception, and it is not a softening of that rule:
+  /// when the *transport* fails the flow still never claims the money
+  /// moved — it says the instruction is saved and will be delivered. The
+  /// receipt remains reserved for a server answer.
   ///
   /// Every edit upstream of the review step clears the quote, so a stale
   /// price can never be the thing the user confirms.
@@ -177,13 +192,18 @@ final class TransferFlowProvider
   }
 }
 
-String _$transferFlowHash() => r'736d2f20911bf63d2fdda8f909357fa87c1b7557';
+String _$transferFlowHash() => r'24178e2e11c572bb71dafc4d83cc1701e59ec0b7';
 
 /// Drives the recipient → amount → review → receipt flow.
 ///
 /// The confirm is **pessimistic**, unlike Phase 7's optimistic freeze: a
 /// transfer is only shown as done once the server says it is. Nothing
 /// about a money movement may be guessed at and rolled back.
+///
+/// Phase 9b adds one exception, and it is not a softening of that rule:
+/// when the *transport* fails the flow still never claims the money
+/// moved — it says the instruction is saved and will be delivered. The
+/// receipt remains reserved for a server answer.
 ///
 /// Every edit upstream of the review step clears the quote, so a stale
 /// price can never be the thing the user confirms.

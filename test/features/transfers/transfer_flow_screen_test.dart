@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:vaulta/core/connectivity/connectivity_monitor.dart';
 import 'package:vaulta/core/error/failure.dart';
 import 'package:vaulta/core/iban/iban.dart';
 import 'package:vaulta/core/money/currency.dart';
@@ -11,11 +12,15 @@ import 'package:vaulta/design_system/theme/app_theme.dart';
 import 'package:vaulta/features/accounts/domain/entities/account.dart';
 import 'package:vaulta/features/accounts/domain/repositories/accounts_repository.dart';
 import 'package:vaulta/features/accounts/presentation/providers/accounts_providers.dart';
+import 'package:vaulta/features/auth/presentation/providers/auth_providers.dart';
 import 'package:vaulta/features/transfers/domain/entities/beneficiary.dart';
 import 'package:vaulta/features/transfers/domain/entities/transfer.dart';
 import 'package:vaulta/features/transfers/domain/repositories/transfers_repository.dart';
+import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
 import 'package:vaulta/features/transfers/presentation/providers/transfers_providers.dart';
 import 'package:vaulta/features/transfers/presentation/screens/transfer_flow_screen.dart';
+
+import 'support/fake_outbox.dart';
 
 class _MockTransfers extends Mock implements TransfersRepository {}
 
@@ -110,6 +115,15 @@ void main() {
         overrides: [
           transfersRepositoryProvider.overrideWithValue(transfers),
           accountsRepositoryProvider.overrideWithValue(accounts),
+          // See fake_outbox.dart: keeps the real Drift DB and the
+          // connectivity channel out of the widget test.
+          outboxRepositoryProvider.overrideWithValue(FakeOutboxRepository()),
+          connectivityMonitorProvider
+              .overrideWithValue(const SilentConnectivityMonitor()),
+          // A queued confirm only drains inside a session (see signedIn
+          // in fake_outbox.dart) — model one so reaching the outbox
+          // doesn't build the real auth/config chain.
+          authControllerProvider.overrideWithValue(signedIn),
         ],
         child: MaterialApp(
           theme: AppTheme.dark(),
@@ -195,8 +209,11 @@ void main() {
     ).called(1);
   });
 
-  testWidgets('a failed confirm keeps the review step and warns',
+  testWidgets('a transport failure lands on the saved-to-send surface',
       (tester) async {
+    // 9b: a network drop no longer strands the user on review. The
+    // confirm is queued and the flow moves to its terminal "saved to
+    // send" screen — which must read as pending, not as a receipt.
     when(
       () => transfers.confirmTransfer(
         transferId: any(named: 'transferId'),
@@ -210,8 +227,14 @@ void main() {
     await tester.tap(find.text('Confirm and send'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Confirm and send'), findsOneWidget);
-    expect(find.textContaining('hasn\u2019t moved'), findsOneWidget);
+    // Off review, onto the queued surface.
+    expect(find.text('Confirm and send'), findsNothing);
+    expect(find.text('Saved to send'), findsWidgets);
+    // The one line that stops a duplicate send.
+    expect(
+      find.textContaining('Nothing has left your account'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('back steps through the flow rather than leaving it',
