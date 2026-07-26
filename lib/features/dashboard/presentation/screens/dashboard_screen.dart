@@ -11,6 +11,7 @@ import 'package:vaulta/features/dashboard/presentation/widgets/balance_card.dart
 import 'package:vaulta/features/dashboard/presentation/widgets/dashboard_skeleton.dart';
 import 'package:vaulta/features/dashboard/presentation/widgets/quick_actions.dart';
 import 'package:vaulta/features/dashboard/presentation/widgets/recent_activity.dart';
+import 'package:vaulta/features/fraud/presentation/widgets/fraud_alert_banner.dart';
 import 'package:vaulta/features/transfers/presentation/widgets/outbox_banner.dart';
 
 /// Authenticated landing screen: balance card, quick actions, and recent
@@ -81,6 +82,10 @@ class _Loaded extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Fraud first, then the outbox: a card that may be
+                  // compromised outranks a transfer that hasn't sent.
+                  // Both render nothing when they have nothing to say.
+                  const FraudAlertBanner(),
                   // Above the balance, because a transfer that has not
                   // gone out yet changes what the balance below it
                   // means. Renders nothing when the queue is empty.

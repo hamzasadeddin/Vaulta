@@ -13,6 +13,7 @@ import 'package:vaulta/core/security/biometric_service.dart';
 import 'package:vaulta/features/auth/presentation/screens/login_screen.dart';
 import 'package:vaulta/features/auth/presentation/screens/otp_screen.dart';
 import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
+import 'package:vaulta/features/fraud/data/datasources/fraud_alert_feed.dart';
 import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
 
 import '../transfers/support/fake_outbox.dart';
@@ -53,6 +54,9 @@ void main() {
         outboxRepositoryProvider.overrideWithValue(FakeOutboxRepository()),
         connectivityMonitorProvider
             .overrideWithValue(const SilentConnectivityMonitor()),
+        // The dashboard's fraud banner subscribes to the push feed; a
+        // silent feed keeps its timer out of this full-app journey.
+        fraudAlertFeedProvider.overrideWithValue(const SilentFraudAlertFeed()),
       ],
       child: const VaultaApp(),
     );

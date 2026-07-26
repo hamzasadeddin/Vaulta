@@ -17,6 +17,7 @@ import 'package:vaulta/features/dashboard/domain/entities/recent_transaction.dar
 import 'package:vaulta/features/dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:vaulta/features/dashboard/presentation/providers/dashboard_providers.dart';
 import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
+import 'package:vaulta/features/fraud/data/datasources/fraud_alert_feed.dart';
 import 'package:vaulta/features/transfers/presentation/providers/outbox_providers.dart';
 
 import '../transfers/support/fake_outbox.dart';
@@ -96,6 +97,11 @@ void main() {
         outboxRepositoryProvider.overrideWithValue(FakeOutboxRepository()),
         connectivityMonitorProvider
             .overrideWithValue(const SilentConnectivityMonitor()),
+        // The dashboard now hosts the fraud banner too, which subscribes
+        // to the push feed. A silent feed keeps the platform-free timer
+        // out of the test tree, the same way the connectivity monitor is
+        // silenced above.
+        fraudAlertFeedProvider.overrideWithValue(const SilentFraudAlertFeed()),
       ],
       child: MaterialApp(
         theme: AppTheme.dark(),
