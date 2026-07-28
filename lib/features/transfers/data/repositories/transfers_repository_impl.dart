@@ -62,6 +62,14 @@ class TransfersRepositoryImpl implements TransfersRepository {
             note: request.note,
             scheduledFor: request.scheduledFor?.toIso8601String(),
           ),
+        PotDestination(:final potId) => _remote.create(
+            sourceAccountId: request.sourceAccountId,
+            destinationType: 'pot',
+            amountMinor: request.amount.minorUnits.toInt(),
+            destinationPotId: potId,
+            note: request.note,
+            scheduledFor: request.scheduledFor?.toIso8601String(),
+          ),
       };
       // The clock is read *after* the await, so the lock is measured from
       // when the price actually arrived rather than from when the request

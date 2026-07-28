@@ -174,6 +174,43 @@ class MockApiInterceptor extends Interceptor {
     ),
   ];
 
+  /// Savings pots, each FK'd into an [_accountFixtures] row — never a
+  /// parallel id (handoff 8 §7). A pot shares its account's currency, so a
+  /// deposit from that account is same-currency and unlocked; `pot_amman`
+  /// is JOD (3 minor digits), the round-up/limits canary. `pot_rainy` has
+  /// round-ups on so the sweep target exists without setup. Schema sketch:
+  ///
+  ///     pots(id pk, account_id fk, name, currency char(3),
+  ///          balance_minor bigint, goal_minor bigint null,
+  ///          round_ups_enabled bool)
+  static const _potFixtures = <_PotFixture>[
+    _PotFixture(
+      id: 'pot_rainy',
+      accountId: 'acc_chk',
+      name: 'Rainy Day',
+      currency: 'USD',
+      balanceMinor: 45000,
+      goalMinor: 200000,
+      roundUpsEnabled: true,
+    ),
+    _PotFixture(
+      id: 'pot_japan',
+      accountId: 'acc_chk',
+      name: 'Japan Trip',
+      currency: 'USD',
+      balanceMinor: 128000,
+      goalMinor: 500000,
+    ),
+    _PotFixture(
+      id: 'pot_amman',
+      accountId: 'acc_jod',
+      name: 'Amman Fund',
+      currency: 'JOD',
+      balanceMinor: 75000,
+      goalMinor: 1000000,
+    ),
+  ];
+
   /// FX rates as exact integer fractions plus the wire string.
   ///
   /// Stored as `(numerator, denominator, wireValue)` rather than a
@@ -221,6 +258,12 @@ class MockApiInterceptor extends Interceptor {
   /// while the deterministic base stays untouched.
   final _cardStatusOverrides = <String, String>{};
   final _cardLimitOverrides = <String, (int, int)>{};
+
+  /// Pots opened during the run, layered over [_potFixtures] exactly like
+  /// the card and balance overrides. Their balances live in
+  /// [_balanceOverrides] alongside accounts, keyed by pot id — accounts
+  /// and pots share one id space for the transfer machinery (§12.2).
+  final _createdPots = <_PotFixture>[];
 
   /// Session-scoped ledger movements. A confirmed transfer debits the
   /// source and credits an own-account destination here, layered over the
@@ -284,6 +327,8 @@ class MockApiInterceptor extends Interceptor {
       'GET /transactions' => _transactions(options),
       'GET /cards' => _cardsList(options),
       'GET /beneficiaries' => _beneficiaries(options),
+      'GET /pots' => _potsList(options),
+      'POST /pots' => _createPot(options),
       'POST /transfers' => _createTransfer(options),
       _ => null,
     };
@@ -668,6 +713,66 @@ class MockApiInterceptor extends Interceptor {
     });
   }
 
+  /// `GET /pots` — the savings pots, seed plus any opened this run, with
+  /// live balances (a deposit/withdrawal moved them through the transfer
+  /// rails and layered a [_balanceOverrides] entry keyed by pot id).
+  Response<dynamic> _potsList(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    return _respond(options, 200, {
+      'pots': [for (final pot in _allPots) _potJson(pot)],
+    });
+  }
+
+  /// `POST /pots` — opens a new, empty pot on an existing account. Funding
+  /// is a separate transfer, so no amount is accepted here. Schema sketch
+  /// as above; the new row starts at a zero balance in the account's
+  /// currency.
+  Response<dynamic> _createPot(RequestOptions options) {
+    if (!_authenticated(options)) return _unauthenticated(options);
+    final body = _body(options);
+
+    final account = _fixtureById(body['accountId'] as String? ?? '');
+    if (account == null) {
+      return _invalid(options, 'accountId', 'Pick a funding account');
+    }
+
+    final name = (body['name'] as String? ?? '').trim();
+    if (name.isEmpty) {
+      return _invalid(options, 'name', 'Name your pot');
+    }
+
+    final rawGoal = body['goalMinor'];
+    int? goalMinor;
+    if (rawGoal != null) {
+      if (rawGoal is! int || rawGoal <= 0) {
+        return _invalid(options, 'goalMinor', 'Enter a target above zero');
+      }
+      goalMinor = rawGoal;
+    }
+
+    final pot = _PotFixture(
+      id: 'pot_${++_counter}',
+      accountId: account.id,
+      name: name,
+      // A pot always matches its funding account's currency (§12.2).
+      currency: account.currency,
+      balanceMinor: 0,
+      goalMinor: goalMinor,
+    );
+    _createdPots.add(pot);
+    return _respond(options, 201, _potJson(pot));
+  }
+
+  Map<String, dynamic> _potJson(_PotFixture pot) => {
+        'id': pot.id,
+        'accountId': pot.accountId,
+        'name': pot.name,
+        'balanceMinor': _balanceOverrides[pot.id] ?? pot.balanceMinor,
+        'currency': pot.currency,
+        'goalMinor': pot.goalMinor,
+        'roundUpsEnabled': pot.roundUpsEnabled,
+      };
+
   /// `POST /transfers` — prices a transfer and returns a draft. Nothing
   /// moves here, so creating several drafts is harmless.
   ///
@@ -689,7 +794,9 @@ class MockApiInterceptor extends Interceptor {
     if (!_authenticated(options)) return _unauthenticated(options);
     final body = _body(options);
 
-    final source = _fixtureById(body['sourceAccountId'] as String? ?? '');
+    // Source is a money container — an account for a normal transfer or a
+    // pot for a withdrawal (handoff 9d §12.2). Both resolve the same way.
+    final source = _containerById(body['sourceAccountId'] as String? ?? '');
     if (source == null) {
       return _invalid(options, 'destination', 'Pick an account to send from');
     }
@@ -748,6 +855,19 @@ class MockApiInterceptor extends Interceptor {
         // rail would resolve it from the receiving institution.
         currency: source.currency,
       );
+    } else if (type == 'pot') {
+      final pot = _potById(destination['potId'] as String? ?? '');
+      if (pot == null || pot.id == source.id) {
+        return _invalid(options, 'destination', 'Pick a different pot');
+      }
+      target = _ResolvedDestination(
+        label: pot.name,
+        detail: 'Savings pot',
+        currency: pot.currency,
+        // The credited leg — a pot id, resolved uniformly with accounts by
+        // `_applyTransfer` (§12.2).
+        accountId: pot.id,
+      );
     }
     if (target == null) {
       return _invalid(options, 'destination', 'Pick a recipient');
@@ -789,7 +909,7 @@ class MockApiInterceptor extends Interceptor {
     }
 
     final totalDebitMinor = amountMinor + feeMinor;
-    if (totalDebitMinor > _balanceOf(source)) {
+    if (totalDebitMinor > _balanceOfId(source.id)) {
       return _invalid(
         options,
         'amountMinor',
@@ -871,11 +991,11 @@ class MockApiInterceptor extends Interceptor {
       });
     }
 
-    final source = _fixtureById(draft.quote['sourceAccountId'] as String);
+    final source = _containerById(draft.quote['sourceAccountId'] as String);
     if (source == null) return _notFound(options);
 
     final totalDebitMinor = draft.quote['totalDebitMinor'] as int;
-    if (!draft.scheduled && totalDebitMinor > _balanceOf(source)) {
+    if (!draft.scheduled && totalDebitMinor > _balanceOfId(source.id)) {
       return _invalid(
         options,
         'amountMinor',
@@ -903,7 +1023,7 @@ class MockApiInterceptor extends Interceptor {
         at: now,
         reference: transfer['reference'] as String,
       );
-      transfer['balanceAfterMinor'] = _balanceOf(source);
+      transfer['balanceAfterMinor'] = _balanceOfId(source.id);
     }
 
     // The draft is single-use: consuming it means even a caller that
@@ -914,44 +1034,55 @@ class MockApiInterceptor extends Interceptor {
   }
 
   /// Moves the money and posts the ledger rows.
+  ///
+  /// Both legs are [_Container]s (§12.2): the debit and credit apply
+  /// uniformly to an account or a pot balance, but a ledger row is posted
+  /// only for the *account* leg — a pot has no transaction feed, so a pot
+  /// deposit shows as an outgoing row on the source account and a pot
+  /// withdrawal as an incoming row on the destination account.
   void _applyTransfer({
     required _Draft draft,
-    required _AccountFixture source,
+    required _Container source,
     required DateTime at,
     required String reference,
   }) {
     final quote = draft.quote;
     final totalDebitMinor = quote['totalDebitMinor'] as int;
-    _balanceOverrides[source.id] = _balanceOf(source) - totalDebitMinor;
-    _postedTransactions.add({
-      'id': 'txn_${quote['id']}_out',
-      'accountId': source.id,
-      'title': 'To ${quote['destinationLabel']}',
-      'category': 'transfer',
-      'amountMinor': -totalDebitMinor,
-      'currency': source.currency,
-      'occurredAt': at.toIso8601String(),
-      'status': 'completed',
-      'reference': reference,
-    });
-
-    final destinationId = draft.destinationAccountId;
-    final destination =
-        destinationId == null ? null : _fixtureById(destinationId);
-    if (destination != null) {
-      final credited = quote['destinationAmountMinor'] as int;
-      _balanceOverrides[destination.id] = _balanceOf(destination) + credited;
+    _balanceOverrides[source.id] = _balanceOfId(source.id) - totalDebitMinor;
+    if (source.isAccount) {
       _postedTransactions.add({
-        'id': 'txn_${quote['id']}_in',
-        'accountId': destination.id,
-        'title': 'From ${source.name}',
+        'id': 'txn_${quote['id']}_out',
+        'accountId': source.id,
+        'title': 'To ${quote['destinationLabel']}',
         'category': 'transfer',
-        'amountMinor': credited,
-        'currency': destination.currency,
+        'amountMinor': -totalDebitMinor,
+        'currency': source.currency,
         'occurredAt': at.toIso8601String(),
         'status': 'completed',
         'reference': reference,
       });
+    }
+
+    final destinationId = draft.destinationAccountId;
+    final destination =
+        destinationId == null ? null : _containerById(destinationId);
+    if (destination != null) {
+      final credited = quote['destinationAmountMinor'] as int;
+      _balanceOverrides[destination.id] =
+          _balanceOfId(destination.id) + credited;
+      if (destination.isAccount) {
+        _postedTransactions.add({
+          'id': 'txn_${quote['id']}_in',
+          'accountId': destination.id,
+          'title': 'From ${source.name}',
+          'category': 'transfer',
+          'amountMinor': credited,
+          'currency': destination.currency,
+          'occurredAt': at.toIso8601String(),
+          'status': 'completed',
+          'reference': reference,
+        });
+      }
     }
 
     // The pool caches a day of rows and derives running balances from the
@@ -1039,6 +1170,52 @@ class MockApiInterceptor extends Interceptor {
 
   int _balanceOf(_AccountFixture fixture) =>
       _balanceOverrides[fixture.id] ?? fixture.balanceMinor;
+
+  /// Every pot the run knows about — seed plus opened-this-session.
+  List<_PotFixture> get _allPots => [..._potFixtures, ..._createdPots];
+
+  _PotFixture? _potById(String id) {
+    for (final pot in _allPots) {
+      if (pot.id == id) return pot;
+    }
+    return null;
+  }
+
+  /// Resolves an id to a money container — an account or a pot — so the
+  /// transfer machinery treats both uniformly (§12.2). `null` when neither.
+  _Container? _containerById(String id) {
+    final account = _fixtureById(id);
+    if (account != null) {
+      return _Container(
+        id: account.id,
+        name: account.name,
+        currency: account.currency,
+        isAccount: true,
+      );
+    }
+    final pot = _potById(id);
+    if (pot != null) {
+      return _Container(
+        id: pot.id,
+        name: pot.name,
+        currency: pot.currency,
+        isAccount: false,
+      );
+    }
+    return null;
+  }
+
+  /// Live balance of any container id — the session override if one exists,
+  /// else the account or pot seed. Zero for an unknown id.
+  int _balanceOfId(String id) {
+    final override = _balanceOverrides[id];
+    if (override != null) return override;
+    final account = _fixtureById(id);
+    if (account != null) return account.balanceMinor;
+    final pot = _potById(id);
+    if (pot != null) return pot.balanceMinor;
+    return 0;
+  }
 
   Response<dynamic> _invalid(
     RequestOptions options,
@@ -1717,5 +1894,47 @@ class _ResolvedDestination {
   final String label;
   final String detail;
   final String currency;
+
+  /// The credited container id — an account or a pot (§12.2). Absent for
+  /// external payees (beneficiary/IBAN), which the mock does not settle.
   final String? accountId;
+}
+
+/// Canonical savings-pot row — the mock's stand-in for the `pots` table.
+class _PotFixture {
+  const _PotFixture({
+    required this.id,
+    required this.accountId,
+    required this.name,
+    required this.currency,
+    required this.balanceMinor,
+    this.goalMinor,
+    this.roundUpsEnabled = false,
+  });
+
+  final String id;
+  final String accountId;
+  final String name;
+  final String currency;
+  final int balanceMinor;
+  final int? goalMinor;
+  final bool roundUpsEnabled;
+}
+
+/// A money container the transfer machinery moves value between — an
+/// account or a savings pot. Pots ride the same rails (§12.2): pricing,
+/// balance checks and settlement treat both uniformly. Only the ledger
+/// feed distinguishes them, since a pot has no transaction list.
+class _Container {
+  const _Container({
+    required this.id,
+    required this.name,
+    required this.currency,
+    required this.isAccount,
+  });
+
+  final String id;
+  final String name;
+  final String currency;
+  final bool isAccount;
 }

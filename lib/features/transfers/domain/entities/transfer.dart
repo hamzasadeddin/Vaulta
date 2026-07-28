@@ -63,6 +63,28 @@ final class IbanDestination extends TransferDestination {
   int get hashCode => Object.hash(iban, holderName);
 }
 
+/// A savings pot the money is set aside into (or drawn from).
+///
+/// The fourth variant, added in Phase 9d — the compile error it lights up
+/// at every exhaustive `switch` on [TransferDestination] is the point of
+/// the union, not a nuisance to silence with a `default:`. Funding a pot
+/// this way lets a deposit inherit the idempotency key, the quote/confirm
+/// split and the offline outbox for free, rather than growing a second
+/// money-movement path. A same-currency pot deposit carries no FX lock.
+final class PotDestination extends TransferDestination {
+  const PotDestination(this.potId);
+
+  final String potId;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PotDestination && other.potId == potId;
+
+  @override
+  int get hashCode => Object.hash(PotDestination, potId);
+}
+
 /// What the user asked for, before the server prices it.
 @immutable
 class TransferRequest {

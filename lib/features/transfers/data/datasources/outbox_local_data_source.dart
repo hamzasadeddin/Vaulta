@@ -185,6 +185,14 @@ class DriftOutboxLocalDataSource implements OutboxLocalDataSource {
         final holder = row.destinationHolderName;
         if (iban == null || holder == null) return null;
         return IbanDestination(iban: iban, holderName: holder);
+      case 'pot':
+        // A pot deposit stores its target in the existing
+        // `destinationAccountId` column — the "credited leg" the schema
+        // already models — discriminated by the `pot` type. No new column,
+        // so no migration: a pot id and an account id never collide on the
+        // wire, and this row is only ever read back by this data source.
+        final potId = row.destinationAccountId;
+        return potId == null ? null : PotDestination(potId);
       default:
         return null;
     }
@@ -212,6 +220,15 @@ class DriftOutboxLocalDataSource implements OutboxLocalDataSource {
           beneficiaryId: null,
           iban: iban.value,
           holderName: holderName,
+        ),
+      // The pot id rides in the `accountId` column (the credited leg),
+      // discriminated by `type: 'pot'` — see `_destinationFromRow`.
+      PotDestination(:final potId) => (
+          type: 'pot',
+          accountId: potId,
+          beneficiaryId: null,
+          iban: null,
+          holderName: null,
         ),
     };
   }

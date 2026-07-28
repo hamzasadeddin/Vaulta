@@ -41,6 +41,9 @@ class AppShell extends StatelessWidget {
         // route at every width (it carries a Hero, and a dual-rendered pane
         // would collide the tag — the accounts rule).
         AdaptiveDestination(icon: LucideIcons.creditCard, label: 'Cards'),
+        // Branch 4 (Phase 9d). No secondaryBody either: a pot detail is a
+        // pushed route at every width.
+        AdaptiveDestination(icon: LucideIcons.piggyBank, label: 'Savings'),
       ],
       selectedIndex: navigationShell.currentIndex,
       onDestinationSelected: (index) => navigationShell.goBranch(

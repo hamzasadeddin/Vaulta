@@ -15,6 +15,9 @@ import 'package:vaulta/features/cards/presentation/cards_paths.dart';
 import 'package:vaulta/features/cards/presentation/screens/card_detail_screen.dart';
 import 'package:vaulta/features/cards/presentation/screens/cards_screen.dart';
 import 'package:vaulta/features/dashboard/presentation/screens/dashboard_screen.dart';
+import 'package:vaulta/features/savings/presentation/savings_paths.dart';
+import 'package:vaulta/features/savings/presentation/screens/pot_detail_screen.dart';
+import 'package:vaulta/features/savings/presentation/screens/pots_screen.dart';
 import 'package:vaulta/features/transactions/presentation/screens/transaction_detail_screen.dart';
 import 'package:vaulta/features/transactions/presentation/screens/transactions_screen.dart';
 import 'package:vaulta/features/transactions/presentation/transactions_paths.dart';
@@ -180,6 +183,25 @@ GoRouter appRouter(Ref ref) {
                     path: ':id',
                     builder: (context, state) => CardDetailScreen(
                       cardId: state.pathParameters['id'] ?? '',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          // Phase 9d, appended after Cards for the same reason: the branch
+          // indices AppShell pins stay put, and the pot detail nests so the
+          // shell survives the round trip.
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: SavingsPaths.root,
+                builder: (context, state) => const PotsScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => PotDetailScreen(
+                      potId: state.pathParameters['id'] ?? '',
                     ),
                   ),
                 ],

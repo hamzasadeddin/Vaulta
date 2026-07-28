@@ -14,6 +14,7 @@ import 'package:vaulta/core/usecase/use_case.dart';
 // presentation layer — no domain or data coupling crosses features.
 import 'package:vaulta/features/accounts/presentation/providers/accounts_providers.dart';
 import 'package:vaulta/features/dashboard/presentation/providers/dashboard_providers.dart';
+import 'package:vaulta/features/savings/presentation/providers/pots_providers.dart';
 import 'package:vaulta/features/transactions/presentation/providers/transactions_providers.dart';
 import 'package:vaulta/features/transfers/data/datasources/transfers_remote_data_source.dart';
 import 'package:vaulta/features/transfers/data/repositories/transfers_repository_impl.dart';
@@ -509,7 +510,11 @@ class TransferFlow extends _$TransferFlow {
     ref
       ..invalidate(accountsControllerProvider)
       ..invalidate(dashboardControllerProvider)
-      ..invalidate(transactionsFeedControllerProvider);
+      ..invalidate(transactionsFeedControllerProvider)
+      // A pot deposit or withdrawal is a transfer, so a settled one leaves
+      // pot balances stale too (§12.2). Harmless for non-pot transfers —
+      // the list simply refetches unchanged.
+      ..invalidate(potsControllerProvider);
   }
 
   Money? _amountFor(String accountId) {

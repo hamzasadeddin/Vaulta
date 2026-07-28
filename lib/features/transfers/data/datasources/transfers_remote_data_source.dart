@@ -25,6 +25,7 @@ class TransfersRemoteDataSource {
     String? destinationBeneficiaryId,
     String? destinationIban,
     String? destinationHolderName,
+    String? destinationPotId,
     String? note,
     String? scheduledFor,
   }) async {
@@ -41,6 +42,7 @@ class TransfersRemoteDataSource {
           if (destinationIban != null) 'iban': destinationIban,
           if (destinationHolderName != null)
             'holderName': destinationHolderName,
+          if (destinationPotId != null) 'potId': destinationPotId,
         },
         if (note != null) 'note': note,
         if (scheduledFor != null) 'scheduledFor': scheduledFor,
