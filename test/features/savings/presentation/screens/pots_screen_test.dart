@@ -9,7 +9,6 @@ import 'package:vaulta/features/savings/domain/entities/pot.dart';
 import 'package:vaulta/features/savings/presentation/providers/pots_providers.dart';
 import 'package:vaulta/features/savings/presentation/screens/pots_screen.dart';
 import 'package:vaulta/features/savings/presentation/widgets/pots_skeleton.dart';
-import 'package:vaulta/features/transactions/domain/entities/transaction.dart';
 import 'package:vaulta/features/transactions/presentation/providers/transactions_providers.dart';
 
 Widget _host(AsyncValue<List<Pot>> pots) {
@@ -51,7 +50,7 @@ void main() {
 
   testWidgets('shows a retry on load failure', (tester) async {
     await tester.pumpWidget(
-      _host(AsyncError(const NetworkFailure(), StackTrace.empty)),
+      _host(const AsyncError(NetworkFailure(), StackTrace.empty)),
     );
     expect(find.text('Try again'), findsOneWidget);
   });
