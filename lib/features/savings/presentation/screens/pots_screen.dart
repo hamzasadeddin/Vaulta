@@ -68,7 +68,8 @@ class _PotsList extends ConsumerWidget {
                       if (index != 0) SizedBox(height: spacing.sm),
                       PotTile(
                         pot: pot,
-                        onTap: () => context.go(SavingsPaths.detail(pot.id)),
+                        onTap: () =>
+                            context.go(SavingsPaths.detail(pot.id)),
                       ),
                     ],
                 ],

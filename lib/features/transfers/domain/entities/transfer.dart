@@ -78,7 +78,8 @@ final class PotDestination extends TransferDestination {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || other is PotDestination && other.potId == potId;
+      identical(this, other) ||
+      other is PotDestination && other.potId == potId;
 
   @override
   int get hashCode => Object.hash(PotDestination, potId);

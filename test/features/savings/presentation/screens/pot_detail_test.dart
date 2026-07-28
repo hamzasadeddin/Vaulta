@@ -29,7 +29,8 @@ void main() {
     goal: Money.parse('2000.00', Currency.usd),
   );
 
-  testWidgets('renders the pot with add and withdraw actions', (tester) async {
+  testWidgets('renders the pot with add and withdraw actions',
+      (tester) async {
     await tester.pumpWidget(_host('pot_rainy', [pot]));
     expect(find.text('Rainy Day'), findsOneWidget);
     expect(find.text('Add money'), findsOneWidget);

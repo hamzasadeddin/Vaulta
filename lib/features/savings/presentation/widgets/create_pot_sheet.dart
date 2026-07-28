@@ -86,8 +86,8 @@ class _CreatePotSheetState extends ConsumerState<CreatePotSheet> {
   @override
   Widget build(BuildContext context) {
     final spacing = context.spacing;
-    final accounts =
-        ref.watch(accountsControllerProvider).value ?? const <Account>[];
+    final accounts = ref.watch(accountsControllerProvider).value ??
+        const <Account>[];
     final selectedId =
         _accountId ?? (accounts.isEmpty ? null : accounts.first.id);
 

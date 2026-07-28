@@ -48,7 +48,8 @@ abstract class PotDto with _$PotDto {
 
   const PotDto._();
 
-  factory PotDto.fromJson(Map<String, dynamic> json) => _$PotDtoFromJson(json);
+  factory PotDto.fromJson(Map<String, dynamic> json) =>
+      _$PotDtoFromJson(json);
 
   Pot? toDomainOrNull() {
     final resolvedCurrency = Currency.tryFromCode(currency);

@@ -536,13 +536,8 @@ extension PotDtoPatterns on PotDto {
     final _that = this;
     switch (_that) {
       case _PotDto() when $default != null:
-        return $default(
-            _that.id,
-            _that.accountId,
-            _that.name,
-            _that.balanceMinor,
-            _that.currency,
-            _that.goalMinor,
+        return $default(_that.id, _that.accountId, _that.name,
+            _that.balanceMinor, _that.currency, _that.goalMinor,
             _that.roundUpsEnabled);
       case _:
         return orElse();
@@ -571,13 +566,8 @@ extension PotDtoPatterns on PotDto {
     final _that = this;
     switch (_that) {
       case _PotDto():
-        return $default(
-            _that.id,
-            _that.accountId,
-            _that.name,
-            _that.balanceMinor,
-            _that.currency,
-            _that.goalMinor,
+        return $default(_that.id, _that.accountId, _that.name,
+            _that.balanceMinor, _that.currency, _that.goalMinor,
             _that.roundUpsEnabled);
       case _:
         throw StateError('Unexpected subclass');
@@ -598,26 +588,16 @@ extension PotDtoPatterns on PotDto {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>(
-    TResult? Function(
-            String id,
-            String accountId,
-            String name,
-            int balanceMinor,
-            String currency,
-            int? goalMinor,
+    TResult? Function(String id, String accountId, String name,
+            int balanceMinor, String currency, int? goalMinor,
             bool roundUpsEnabled)?
         $default,
   ) {
     final _that = this;
     switch (_that) {
       case _PotDto() when $default != null:
-        return $default(
-            _that.id,
-            _that.accountId,
-            _that.name,
-            _that.balanceMinor,
-            _that.currency,
-            _that.goalMinor,
+        return $default(_that.id, _that.accountId, _that.name,
+            _that.balanceMinor, _that.currency, _that.goalMinor,
             _that.roundUpsEnabled);
       case _:
         return null;
@@ -637,7 +617,8 @@ class _PotDto extends PotDto {
       this.goalMinor,
       this.roundUpsEnabled = false})
       : super._();
-  factory _PotDto.fromJson(Map<String, dynamic> json) => _$PotDtoFromJson(json);
+  factory _PotDto.fromJson(Map<String, dynamic> json) =>
+      _$PotDtoFromJson(json);
 
   @override
   final String id;
