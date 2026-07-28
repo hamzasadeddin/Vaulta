@@ -110,8 +110,7 @@ abstract class _$PotsController extends $Notifier<AsyncValue<List<Pot>>> {
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
-    final ref =
-        this.ref as $Ref<AsyncValue<List<Pot>>, AsyncValue<List<Pot>>>;
+    final ref = this.ref as $Ref<AsyncValue<List<Pot>>, AsyncValue<List<Pot>>>;
     final element = ref.element as $ClassProviderElement<
         AnyNotifier<AsyncValue<List<Pot>>, AsyncValue<List<Pot>>>,
         AsyncValue<List<Pot>>,

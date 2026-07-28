@@ -30,8 +30,7 @@ void main() {
     roundUpsEnabled: true,
   );
 
-  test('accrues spare change from spends, skipping credits and transfers',
-      () {
+  test('accrues spare change from spends, skipping credits and transfers', () {
     final summary = computeRoundUpSummary(
       pots: [rainy],
       transactions: [
